@@ -927,6 +927,254 @@ func (x *ListRuleResponse) GetRules() []*ListRuleItem {
 	return nil
 }
 
+type AddFallbackRuleRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Config        *serial.TypedMessage   `protobuf:"bytes,1,opt,name=config,proto3" json:"config,omitempty"`
+	ShouldAppend  bool                   `protobuf:"varint,2,opt,name=shouldAppend,proto3" json:"shouldAppend,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AddFallbackRuleRequest) Reset() {
+	*x = AddFallbackRuleRequest{}
+	mi := &file_app_router_command_command_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AddFallbackRuleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AddFallbackRuleRequest) ProtoMessage() {}
+
+func (x *AddFallbackRuleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_app_router_command_command_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AddFallbackRuleRequest.ProtoReflect.Descriptor instead.
+func (*AddFallbackRuleRequest) Descriptor() ([]byte, []int) {
+	return file_app_router_command_command_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *AddFallbackRuleRequest) GetConfig() *serial.TypedMessage {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+func (x *AddFallbackRuleRequest) GetShouldAppend() bool {
+	if x != nil {
+		return x.ShouldAppend
+	}
+	return false
+}
+
+type AddFallbackRuleResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AddFallbackRuleResponse) Reset() {
+	*x = AddFallbackRuleResponse{}
+	mi := &file_app_router_command_command_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AddFallbackRuleResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AddFallbackRuleResponse) ProtoMessage() {}
+
+func (x *AddFallbackRuleResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_app_router_command_command_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AddFallbackRuleResponse.ProtoReflect.Descriptor instead.
+func (*AddFallbackRuleResponse) Descriptor() ([]byte, []int) {
+	return file_app_router_command_command_proto_rawDescGZIP(), []int{18}
+}
+
+type RemoveFallbackRuleRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RuleTag       string                 `protobuf:"bytes,1,opt,name=ruleTag,proto3" json:"ruleTag,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveFallbackRuleRequest) Reset() {
+	*x = RemoveFallbackRuleRequest{}
+	mi := &file_app_router_command_command_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveFallbackRuleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveFallbackRuleRequest) ProtoMessage() {}
+
+func (x *RemoveFallbackRuleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_app_router_command_command_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveFallbackRuleRequest.ProtoReflect.Descriptor instead.
+func (*RemoveFallbackRuleRequest) Descriptor() ([]byte, []int) {
+	return file_app_router_command_command_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *RemoveFallbackRuleRequest) GetRuleTag() string {
+	if x != nil {
+		return x.RuleTag
+	}
+	return ""
+}
+
+type RemoveFallbackRuleResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveFallbackRuleResponse) Reset() {
+	*x = RemoveFallbackRuleResponse{}
+	mi := &file_app_router_command_command_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveFallbackRuleResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveFallbackRuleResponse) ProtoMessage() {}
+
+func (x *RemoveFallbackRuleResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_app_router_command_command_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveFallbackRuleResponse.ProtoReflect.Descriptor instead.
+func (*RemoveFallbackRuleResponse) Descriptor() ([]byte, []int) {
+	return file_app_router_command_command_proto_rawDescGZIP(), []int{20}
+}
+
+type GetRoutingModeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRoutingModeRequest) Reset() {
+	*x = GetRoutingModeRequest{}
+	mi := &file_app_router_command_command_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRoutingModeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRoutingModeRequest) ProtoMessage() {}
+
+func (x *GetRoutingModeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_app_router_command_command_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRoutingModeRequest.ProtoReflect.Descriptor instead.
+func (*GetRoutingModeRequest) Descriptor() ([]byte, []int) {
+	return file_app_router_command_command_proto_rawDescGZIP(), []int{21}
+}
+
+type GetRoutingModeResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FallbackMode  bool                   `protobuf:"varint,1,opt,name=fallbackMode,proto3" json:"fallbackMode,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetRoutingModeResponse) Reset() {
+	*x = GetRoutingModeResponse{}
+	mi := &file_app_router_command_command_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetRoutingModeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetRoutingModeResponse) ProtoMessage() {}
+
+func (x *GetRoutingModeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_app_router_command_command_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetRoutingModeResponse.ProtoReflect.Descriptor instead.
+func (*GetRoutingModeResponse) Descriptor() ([]byte, []int) {
+	return file_app_router_command_command_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *GetRoutingModeResponse) GetFallbackMode() bool {
+	if x != nil {
+		return x.FallbackMode
+	}
+	return false
+}
+
 type Config struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -935,7 +1183,7 @@ type Config struct {
 
 func (x *Config) Reset() {
 	*x = Config{}
-	mi := &file_app_router_command_command_proto_msgTypes[17]
+	mi := &file_app_router_command_command_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -947,7 +1195,7 @@ func (x *Config) String() string {
 func (*Config) ProtoMessage() {}
 
 func (x *Config) ProtoReflect() protoreflect.Message {
-	mi := &file_app_router_command_command_proto_msgTypes[17]
+	mi := &file_app_router_command_command_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -960,7 +1208,7 @@ func (x *Config) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Config.ProtoReflect.Descriptor instead.
 func (*Config) Descriptor() ([]byte, []int) {
-	return file_app_router_command_command_proto_rawDescGZIP(), []int{17}
+	return file_app_router_command_command_proto_rawDescGZIP(), []int{23}
 }
 
 var File_app_router_command_command_proto protoreflect.FileDescriptor
@@ -1031,8 +1279,18 @@ const file_app_router_command_command_proto_rawDesc = "" +
 	"\x03tag\x18\x01 \x01(\tR\x03tag\x12\x18\n" +
 	"\aruleTag\x18\x02 \x01(\tR\aruleTag\"O\n" +
 	"\x10ListRuleResponse\x12;\n" +
-	"\x05rules\x18\x01 \x03(\v2%.xray.app.router.command.ListRuleItemR\x05rules\"\b\n" +
-	"\x06Config2\xa2\x06\n" +
+	"\x05rules\x18\x01 \x03(\v2%.xray.app.router.command.ListRuleItemR\x05rules\"v\n" +
+	"\x16AddFallbackRuleRequest\x128\n" +
+	"\x06config\x18\x01 \x01(\v2 .xray.common.serial.TypedMessageR\x06config\x12\"\n" +
+	"\fshouldAppend\x18\x02 \x01(\bR\fshouldAppend\"\x19\n" +
+	"\x17AddFallbackRuleResponse\"5\n" +
+	"\x19RemoveFallbackRuleRequest\x12\x18\n" +
+	"\aruleTag\x18\x01 \x01(\tR\aruleTag\"\x1c\n" +
+	"\x1aRemoveFallbackRuleResponse\"\x17\n" +
+	"\x15GetRoutingModeRequest\"<\n" +
+	"\x16GetRoutingModeResponse\x12\"\n" +
+	"\ffallbackMode\x18\x01 \x01(\bR\ffallbackMode\"\b\n" +
+	"\x06Config2\x90\t\n" +
 	"\x0eRoutingService\x12{\n" +
 	"\x15SubscribeRoutingStats\x125.xray.app.router.command.SubscribeRoutingStatsRequest\x1a'.xray.app.router.command.RoutingContext\"\x000\x01\x12a\n" +
 	"\tTestRoute\x12).xray.app.router.command.TestRouteRequest\x1a'.xray.app.router.command.RoutingContext\"\x00\x12v\n" +
@@ -1041,7 +1299,10 @@ const file_app_router_command_command_proto_rawDesc = "" +
 	"\aAddRule\x12'.xray.app.router.command.AddRuleRequest\x1a(.xray.app.router.command.AddRuleResponse\"\x00\x12g\n" +
 	"\n" +
 	"RemoveRule\x12*.xray.app.router.command.RemoveRuleRequest\x1a+.xray.app.router.command.RemoveRuleResponse\"\x00\x12a\n" +
-	"\bListRule\x12(.xray.app.router.command.ListRuleRequest\x1a).xray.app.router.command.ListRuleResponse\"\x00Bg\n" +
+	"\bListRule\x12(.xray.app.router.command.ListRuleRequest\x1a).xray.app.router.command.ListRuleResponse\"\x00\x12v\n" +
+	"\x0fAddFallbackRule\x12/.xray.app.router.command.AddFallbackRuleRequest\x1a0.xray.app.router.command.AddFallbackRuleResponse\"\x00\x12\x7f\n" +
+	"\x12RemoveFallbackRule\x122.xray.app.router.command.RemoveFallbackRuleRequest\x1a3.xray.app.router.command.RemoveFallbackRuleResponse\"\x00\x12s\n" +
+	"\x0eGetRoutingMode\x12..xray.app.router.command.GetRoutingModeRequest\x1a/.xray.app.router.command.GetRoutingModeResponse\"\x00Bg\n" +
 	"\x1bcom.xray.app.router.commandP\x01Z,github.com/xtls/xray-core/app/router/command\xaa\x02\x17Xray.App.Router.Commandb\x06proto3"
 
 var (
@@ -1056,7 +1317,7 @@ func file_app_router_command_command_proto_rawDescGZIP() []byte {
 	return file_app_router_command_command_proto_rawDescData
 }
 
-var file_app_router_command_command_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_app_router_command_command_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_app_router_command_command_proto_goTypes = []any{
 	(*RoutingContext)(nil),                 // 0: xray.app.router.command.RoutingContext
 	(*SubscribeRoutingStatsRequest)(nil),   // 1: xray.app.router.command.SubscribeRoutingStatsRequest
@@ -1075,39 +1336,52 @@ var file_app_router_command_command_proto_goTypes = []any{
 	(*ListRuleRequest)(nil),                // 14: xray.app.router.command.ListRuleRequest
 	(*ListRuleItem)(nil),                   // 15: xray.app.router.command.ListRuleItem
 	(*ListRuleResponse)(nil),               // 16: xray.app.router.command.ListRuleResponse
-	(*Config)(nil),                         // 17: xray.app.router.command.Config
-	nil,                                    // 18: xray.app.router.command.RoutingContext.AttributesEntry
-	(net.Network)(0),                       // 19: xray.common.net.Network
-	(*serial.TypedMessage)(nil),            // 20: xray.common.serial.TypedMessage
+	(*AddFallbackRuleRequest)(nil),         // 17: xray.app.router.command.AddFallbackRuleRequest
+	(*AddFallbackRuleResponse)(nil),        // 18: xray.app.router.command.AddFallbackRuleResponse
+	(*RemoveFallbackRuleRequest)(nil),      // 19: xray.app.router.command.RemoveFallbackRuleRequest
+	(*RemoveFallbackRuleResponse)(nil),     // 20: xray.app.router.command.RemoveFallbackRuleResponse
+	(*GetRoutingModeRequest)(nil),          // 21: xray.app.router.command.GetRoutingModeRequest
+	(*GetRoutingModeResponse)(nil),         // 22: xray.app.router.command.GetRoutingModeResponse
+	(*Config)(nil),                         // 23: xray.app.router.command.Config
+	nil,                                    // 24: xray.app.router.command.RoutingContext.AttributesEntry
+	(net.Network)(0),                       // 25: xray.common.net.Network
+	(*serial.TypedMessage)(nil),            // 26: xray.common.serial.TypedMessage
 }
 var file_app_router_command_command_proto_depIdxs = []int32{
-	19, // 0: xray.app.router.command.RoutingContext.Network:type_name -> xray.common.net.Network
-	18, // 1: xray.app.router.command.RoutingContext.Attributes:type_name -> xray.app.router.command.RoutingContext.AttributesEntry
+	25, // 0: xray.app.router.command.RoutingContext.Network:type_name -> xray.common.net.Network
+	24, // 1: xray.app.router.command.RoutingContext.Attributes:type_name -> xray.app.router.command.RoutingContext.AttributesEntry
 	0,  // 2: xray.app.router.command.TestRouteRequest.RoutingContext:type_name -> xray.app.router.command.RoutingContext
 	4,  // 3: xray.app.router.command.BalancerMsg.override:type_name -> xray.app.router.command.OverrideInfo
 	3,  // 4: xray.app.router.command.BalancerMsg.principle_target:type_name -> xray.app.router.command.PrincipleTargetInfo
 	5,  // 5: xray.app.router.command.GetBalancerInfoResponse.balancer:type_name -> xray.app.router.command.BalancerMsg
-	20, // 6: xray.app.router.command.AddRuleRequest.config:type_name -> xray.common.serial.TypedMessage
+	26, // 6: xray.app.router.command.AddRuleRequest.config:type_name -> xray.common.serial.TypedMessage
 	15, // 7: xray.app.router.command.ListRuleResponse.rules:type_name -> xray.app.router.command.ListRuleItem
-	1,  // 8: xray.app.router.command.RoutingService.SubscribeRoutingStats:input_type -> xray.app.router.command.SubscribeRoutingStatsRequest
-	2,  // 9: xray.app.router.command.RoutingService.TestRoute:input_type -> xray.app.router.command.TestRouteRequest
-	6,  // 10: xray.app.router.command.RoutingService.GetBalancerInfo:input_type -> xray.app.router.command.GetBalancerInfoRequest
-	8,  // 11: xray.app.router.command.RoutingService.OverrideBalancerTarget:input_type -> xray.app.router.command.OverrideBalancerTargetRequest
-	10, // 12: xray.app.router.command.RoutingService.AddRule:input_type -> xray.app.router.command.AddRuleRequest
-	12, // 13: xray.app.router.command.RoutingService.RemoveRule:input_type -> xray.app.router.command.RemoveRuleRequest
-	14, // 14: xray.app.router.command.RoutingService.ListRule:input_type -> xray.app.router.command.ListRuleRequest
-	0,  // 15: xray.app.router.command.RoutingService.SubscribeRoutingStats:output_type -> xray.app.router.command.RoutingContext
-	0,  // 16: xray.app.router.command.RoutingService.TestRoute:output_type -> xray.app.router.command.RoutingContext
-	7,  // 17: xray.app.router.command.RoutingService.GetBalancerInfo:output_type -> xray.app.router.command.GetBalancerInfoResponse
-	9,  // 18: xray.app.router.command.RoutingService.OverrideBalancerTarget:output_type -> xray.app.router.command.OverrideBalancerTargetResponse
-	11, // 19: xray.app.router.command.RoutingService.AddRule:output_type -> xray.app.router.command.AddRuleResponse
-	13, // 20: xray.app.router.command.RoutingService.RemoveRule:output_type -> xray.app.router.command.RemoveRuleResponse
-	16, // 21: xray.app.router.command.RoutingService.ListRule:output_type -> xray.app.router.command.ListRuleResponse
-	15, // [15:22] is the sub-list for method output_type
-	8,  // [8:15] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	26, // 8: xray.app.router.command.AddFallbackRuleRequest.config:type_name -> xray.common.serial.TypedMessage
+	1,  // 9: xray.app.router.command.RoutingService.SubscribeRoutingStats:input_type -> xray.app.router.command.SubscribeRoutingStatsRequest
+	2,  // 10: xray.app.router.command.RoutingService.TestRoute:input_type -> xray.app.router.command.TestRouteRequest
+	6,  // 11: xray.app.router.command.RoutingService.GetBalancerInfo:input_type -> xray.app.router.command.GetBalancerInfoRequest
+	8,  // 12: xray.app.router.command.RoutingService.OverrideBalancerTarget:input_type -> xray.app.router.command.OverrideBalancerTargetRequest
+	10, // 13: xray.app.router.command.RoutingService.AddRule:input_type -> xray.app.router.command.AddRuleRequest
+	12, // 14: xray.app.router.command.RoutingService.RemoveRule:input_type -> xray.app.router.command.RemoveRuleRequest
+	14, // 15: xray.app.router.command.RoutingService.ListRule:input_type -> xray.app.router.command.ListRuleRequest
+	17, // 16: xray.app.router.command.RoutingService.AddFallbackRule:input_type -> xray.app.router.command.AddFallbackRuleRequest
+	19, // 17: xray.app.router.command.RoutingService.RemoveFallbackRule:input_type -> xray.app.router.command.RemoveFallbackRuleRequest
+	21, // 18: xray.app.router.command.RoutingService.GetRoutingMode:input_type -> xray.app.router.command.GetRoutingModeRequest
+	0,  // 19: xray.app.router.command.RoutingService.SubscribeRoutingStats:output_type -> xray.app.router.command.RoutingContext
+	0,  // 20: xray.app.router.command.RoutingService.TestRoute:output_type -> xray.app.router.command.RoutingContext
+	7,  // 21: xray.app.router.command.RoutingService.GetBalancerInfo:output_type -> xray.app.router.command.GetBalancerInfoResponse
+	9,  // 22: xray.app.router.command.RoutingService.OverrideBalancerTarget:output_type -> xray.app.router.command.OverrideBalancerTargetResponse
+	11, // 23: xray.app.router.command.RoutingService.AddRule:output_type -> xray.app.router.command.AddRuleResponse
+	13, // 24: xray.app.router.command.RoutingService.RemoveRule:output_type -> xray.app.router.command.RemoveRuleResponse
+	16, // 25: xray.app.router.command.RoutingService.ListRule:output_type -> xray.app.router.command.ListRuleResponse
+	18, // 26: xray.app.router.command.RoutingService.AddFallbackRule:output_type -> xray.app.router.command.AddFallbackRuleResponse
+	20, // 27: xray.app.router.command.RoutingService.RemoveFallbackRule:output_type -> xray.app.router.command.RemoveFallbackRuleResponse
+	22, // 28: xray.app.router.command.RoutingService.GetRoutingMode:output_type -> xray.app.router.command.GetRoutingModeResponse
+	19, // [19:29] is the sub-list for method output_type
+	9,  // [9:19] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_app_router_command_command_proto_init() }
@@ -1121,7 +1395,7 @@ func file_app_router_command_command_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_app_router_command_command_proto_rawDesc), len(file_app_router_command_command_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   19,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

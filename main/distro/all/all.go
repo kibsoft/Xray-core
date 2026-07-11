@@ -33,6 +33,7 @@ import (
 
 	// Developer preview features
 	_ "github.com/xtls/xray-core/app/observatory"
+	_ "github.com/xtls/xray-core/app/observatory/fallback"
 
 	// Inbound and outbound proxies.
 	_ "github.com/xtls/xray-core/proxy/blackhole"

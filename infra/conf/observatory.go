@@ -5,6 +5,7 @@ import (
 
 	"github.com/xtls/xray-core/app/observatory"
 	"github.com/xtls/xray-core/app/observatory/burst"
+	"github.com/xtls/xray-core/app/observatory/fallback"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/infra/conf/cfgcommon/duration"
 )
@@ -18,6 +19,24 @@ type ObservatoryConfig struct {
 
 func (o *ObservatoryConfig) Build() (proto.Message, error) {
 	return &observatory.Config{SubjectSelector: o.SubjectSelector, ProbeUrl: o.ProbeURL, ProbeInterval: int64(o.ProbeInterval), EnableConcurrency: o.EnableConcurrency}, nil
+}
+
+type FallbackObservatoryConfig struct {
+	SubjectSelector         []string          `json:"subjectSelector"`
+	FallbackSubjectSelector []string          `json:"fallbackSubjectSelector"`
+	ProbeURL                string            `json:"probeURL"`
+	ProbeInterval           duration.Duration `json:"probeInterval"`
+	EnableConcurrency       bool              `json:"enableConcurrency"`
+}
+
+func (o *FallbackObservatoryConfig) Build() (proto.Message, error) {
+	return &fallback.Config{
+		SubjectSelector:         o.SubjectSelector,
+		FallbackSubjectSelector: o.FallbackSubjectSelector,
+		ProbeUrl:                o.ProbeURL,
+		ProbeInterval:           int64(o.ProbeInterval),
+		EnableConcurrency:       o.EnableConcurrency,
+	}, nil
 }
 
 type BurstObservatoryConfig struct {

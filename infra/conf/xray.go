@@ -358,8 +358,9 @@ type Config struct {
 	Stats            *StatsConfig            `json:"stats"`
 	Reverse          *ReverseConfig          `json:"reverse"`
 	FakeDNS          *FakeDNSConfig          `json:"fakeDns"`
-	Observatory      *ObservatoryConfig      `json:"observatory"`
-	BurstObservatory *BurstObservatoryConfig `json:"burstObservatory"`
+	Observatory          *ObservatoryConfig          `json:"observatory"`
+	BurstObservatory     *BurstObservatoryConfig     `json:"burstObservatory"`
+	FallbackObservatory  *FallbackObservatoryConfig  `json:"fallbackObservatory"`
 	Version          *VersionConfig          `json:"version"`
 	Geodata          *GeodataConfig          `json:"geodata"`
 }
@@ -430,6 +431,10 @@ func (c *Config) Override(o *Config, fn string) {
 		c.BurstObservatory = o.BurstObservatory
 	}
 
+	if o.FallbackObservatory != nil {
+		c.FallbackObservatory = o.FallbackObservatory
+	}
+
 	if o.Version != nil {
 		c.Version = o.Version
 	}
@@ -479,6 +484,9 @@ func (c *Config) Override(o *Config, fn string) {
 func (c *Config) Build() (*core.Config, error) {
 	if err := PostProcessConfigureFile(c); err != nil {
 		return nil, errors.New("failed to post-process configuration file").Base(err)
+	}
+	if err := c.validateObservatoryConfig(); err != nil {
+		return nil, err
 	}
 
 	config := &core.Config{
@@ -578,6 +586,14 @@ func (c *Config) Build() (*core.Config, error) {
 		config.App = append(config.App, serial.ToTypedMessage(r))
 	}
 
+	if c.FallbackObservatory != nil {
+		r, err := c.FallbackObservatory.Build()
+		if err != nil {
+			return nil, errors.New("failed to build fallback observatory configuration").Base(err)
+		}
+		config.App = append(config.App, serial.ToTypedMessage(r))
+	}
+
 	if c.Version != nil {
 		r, err := c.Version.Build()
 		if err != nil {
@@ -627,6 +643,36 @@ func (c *Config) Build() (*core.Config, error) {
 	}
 
 	return config, nil
+}
+
+func (c *Config) validateObservatoryConfig() error {
+	observatoryCount := 0
+	if c.Observatory != nil {
+		observatoryCount++
+	}
+	if c.BurstObservatory != nil {
+		observatoryCount++
+	}
+	if c.FallbackObservatory != nil {
+		observatoryCount++
+	}
+	if observatoryCount > 1 {
+		return errors.New("only one of observatory, burstObservatory, fallbackObservatory can be configured")
+	}
+
+	usesFallbackRouting := false
+	if c.RouterConfig != nil {
+		if c.RouterConfig.FallbackBalancerTag != "" || len(c.RouterConfig.FallbackRules) > 0 {
+			usesFallbackRouting = true
+		}
+	}
+	if usesFallbackRouting && c.FallbackObservatory == nil {
+		return errors.New("fallbackObservatory is required when fallback routing is enabled")
+	}
+	if usesFallbackRouting && (c.Observatory != nil || c.BurstObservatory != nil) {
+		return errors.New("use fallbackObservatory instead of observatory when fallback routing is enabled")
+	}
+	return nil
 }
 
 // Convert string to Address.

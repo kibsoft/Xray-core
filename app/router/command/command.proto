@@ -115,6 +115,22 @@ message ListRuleResponse{
   repeated ListRuleItem rules = 1;
 }
 
+message AddFallbackRuleRequest {
+  xray.common.serial.TypedMessage config = 1;
+  bool shouldAppend = 2;
+}
+message AddFallbackRuleResponse {}
+
+message RemoveFallbackRuleRequest {
+  string ruleTag = 1;
+}
+message RemoveFallbackRuleResponse {}
+
+message GetRoutingModeRequest {}
+message GetRoutingModeResponse {
+  bool fallbackMode = 1;
+}
+
 service RoutingService {
   rpc SubscribeRoutingStats(SubscribeRoutingStatsRequest)
       returns (stream RoutingContext) {}
@@ -127,6 +143,10 @@ service RoutingService {
   rpc RemoveRule(RemoveRuleRequest) returns (RemoveRuleResponse) {}
 
   rpc ListRule(ListRuleRequest) returns (ListRuleResponse) {}
+
+  rpc AddFallbackRule(AddFallbackRuleRequest) returns (AddFallbackRuleResponse) {}
+  rpc RemoveFallbackRule(RemoveFallbackRuleRequest) returns (RemoveFallbackRuleResponse) {}
+  rpc GetRoutingMode(GetRoutingModeRequest) returns (GetRoutingModeResponse) {}
 }
 
 message Config {}

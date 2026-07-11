@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package xray.core.app.observatory.fallback;
+option csharp_namespace = "Xray.App.Observatory.Fallback";
+option go_package = "github.com/xtls/xray-core/app/observatory/fallback";
+option java_package = "com.xray.app.observatory.fallback";
+option java_multiple_files = true;
+
+message Config {
+  repeated string subject_selector = 2;
+  repeated string fallback_subject_selector = 6;
+  string probe_url = 3;
+  int64 probe_interval = 4;
+  bool enable_concurrency = 5;
+}

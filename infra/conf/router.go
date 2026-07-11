@@ -38,7 +38,7 @@ func (r *BalancingRule) Build() (*router.BalancingRule, error) {
 	switch r.Strategy.Type {
 	case "":
 		r.Strategy.Type = strategyRandom
-	case strategyRandom, strategyLeastLoad, strategyLeastPing, strategyRoundRobin:
+	case strategyRandom, strategyLeastLoad, strategyLeastPing, strategyRoundRobin, strategyStickyRandom:
 	default:
 		return nil, errors.New("unknown balancing strategy: " + r.Strategy.Type)
 	}
@@ -69,9 +69,11 @@ func (r *BalancingRule) Build() (*router.BalancingRule, error) {
 }
 
 type RouterConfig struct {
-	RuleList       []json.RawMessage `json:"rules"`
-	DomainStrategy *string           `json:"domainStrategy"`
-	Balancers      []*BalancingRule  `json:"balancers"`
+	RuleList            []json.RawMessage `json:"rules"`
+	FallbackRules       []json.RawMessage `json:"fallbackRules"`
+	FallbackBalancerTag string            `json:"fallbackBalancerTag"`
+	DomainStrategy      *string           `json:"domainStrategy"`
+	Balancers           []*BalancingRule  `json:"balancers"`
 }
 
 func (c *RouterConfig) getDomainStrategy() router.Config_DomainStrategy {
@@ -105,6 +107,15 @@ func (c *RouterConfig) Build() (*router.Config, error) {
 		}
 		config.Rule = append(config.Rule, rule)
 	}
+
+	for _, rawRule := range c.FallbackRules {
+		rule, err := parseRule(rawRule)
+		if err != nil {
+			return nil, err
+		}
+		config.FallbackRule = append(config.FallbackRule, rule)
+	}
+	config.FallbackBalancerTag = c.FallbackBalancerTag
 
 	for _, rawBalancer := range c.Balancers {
 		balancer, err := rawBalancer.Build()

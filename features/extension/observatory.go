@@ -18,6 +18,12 @@ type BurstObservatory interface {
 	Check(tag []string)
 }
 
+// FallbackProbeObservatory triggers an immediate probe of fallback outbounds.
+type FallbackProbeObservatory interface {
+	Observatory
+	ProbeFallback()
+}
+
 func ObservatoryType() interface{} {
 	return (*Observatory)(nil)
 }

@@ -112,8 +112,7 @@ func (b *Balancer) PickOutbound() (string, error) {
 			errors.LogInfo(context.Background(), "fallback to [", b.fallbackTag, "], due to empty tag returned")
 			return b.fallbackTag, nil
 		}
-		// will use default handler
-		return "", errors.New("balancing strategy returns empty tag")
+		return "", nil
 	}
 	return tag, nil
 }
