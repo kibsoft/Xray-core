@@ -16,6 +16,14 @@ import (
 	"github.com/xtls/xray-core/transport/internet"
 )
 
+func pathLastSegmentLooksLikeFile(path string) bool {
+	segment := path
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		segment = path[i+1:]
+	}
+	return strings.Contains(segment, ".")
+}
+
 func (c *Config) GetNormalizedPath() string {
 	pathAndQuery := strings.SplitN(c.Path, "?", 2)
 	path := pathAndQuery[0]
@@ -24,7 +32,7 @@ func (c *Config) GetNormalizedPath() string {
 		path = "/" + path
 	}
 
-	if path[len(path)-1] != '/' {
+	if path[len(path)-1] != '/' && !pathLastSegmentLooksLikeFile(path) {
 		path = path + "/"
 	}
 
