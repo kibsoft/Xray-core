@@ -1,12 +1,15 @@
 package utils
 
 import (
+	cryptorand "crypto/rand"
 	"hash/fnv"
 	"math"
+	"math/big"
 	"math/rand"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/klauspost/cpuid/v2"
@@ -263,6 +266,73 @@ func applyMasqueradedHeaders(header http.Header, browser string, variant string)
 	}
 }
 
+func cryptoN(n int) int {
+	if n <= 1 {
+		return 0
+	}
+	v, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(n)))
+	if err != nil {
+		return 0
+	}
+	return int(v.Int64())
+}
+
+var (
+	autoOnce sync.Once
+	autoUA   string
+	autoLang string
+)
+
+// PickAutoFirefoxIdentity returns a Firefox UA with a random desktop OS and
+// a nearby release version. TLS fingerprint should stay "firefox".
+func PickAutoFirefoxIdentity() (ua, lang string) {
+	base := FirefoxVersion()
+	ver := base + cryptoN(7) - 3
+	if ver < 128 {
+		ver = 128
+	}
+	vs := strconv.Itoa(ver)
+	// Mix Windows / macOS / Linux so clients are not all Win10 + one build.
+	platforms := []string{
+		"Windows NT 10.0; Win64; x64",
+		"Windows NT 10.0; Win64; x64",
+		"Windows NT 10.0; WOW64",
+		"Macintosh; Intel Mac OS X 10.15",
+		"Macintosh; Intel Mac OS X 14.6",
+		"Macintosh; Intel Mac OS X 15.5",
+		"X11; Linux x86_64",
+		"X11; Ubuntu; Linux x86_64",
+		"X11; Fedora; Linux x86_64",
+		"X11; Linux x86_64",
+	}
+	platform := platforms[cryptoN(len(platforms))]
+	ua = "Mozilla/5.0 (" + platform + "; rv:" + vs + ".0) Gecko/20100101 Firefox/" + vs + ".0"
+	langs := []string{
+		"ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3",
+		"ru-RU,ru;q=0.9,en-US;q=0.6,en;q=0.4",
+		"ru,en-US;q=0.9,en;q=0.8",
+		"en-US,en;q=0.5",
+		"en-US,en;q=0.9,ru;q=0.4",
+		"en-GB,en;q=0.9,ru;q=0.3",
+	}
+	lang = langs[cryptoN(len(langs))]
+	return ua, lang
+}
+
+func stickyAutoFirefox() (ua, lang string) {
+	autoOnce.Do(func() {
+		autoUA, autoLang = PickAutoFirefoxIdentity()
+	})
+	return autoUA, autoLang
+}
+
+func applyStickyAutoHeaders(header http.Header) {
+	ua, lang := stickyAutoFirefox()
+	header.Set("User-Agent", ua)
+	header.Set("Accept-Language", lang)
+	header.Set("DNT", "1")
+}
+
 func TryDefaultHeadersWith(header http.Header, variant string) {
 	// The global UA special value handler for transports. Used to be called HandleTransportUASettings.
 	// Just a FYI to whoever needing to fix this piece of code after some spontaneous event, I tried to make the two methods separate to let the code be cleaner and more organized.
@@ -270,6 +340,8 @@ func TryDefaultHeadersWith(header http.Header, variant string) {
 		applyMasqueradedHeaders(header, "chrome", variant)
 	} else {
 		switch header.Get("User-Agent") {
+		case "auto":
+			applyStickyAutoHeaders(header)
 		case "chrome":
 			applyMasqueradedHeaders(header, "chrome", variant)
 		case "firefox":
