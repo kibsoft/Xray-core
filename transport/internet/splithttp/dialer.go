@@ -81,6 +81,55 @@ func getHTTPClient(ctx context.Context, dest net.Destination, streamSettings *in
 	return xmuxClient.XmuxConn.(DialerClient), xmuxClient
 }
 
+// fireDecoyGets fetches real site pages (no token) so CDN/origin see normal HTML
+// traffic on the same client IP as the xhttp tunnel.
+func fireDecoyGets(ctx context.Context, httpClient DialerClient, base url.URL, cfg *Config) {
+	dc, ok := httpClient.(*DefaultDialerClient)
+	if !ok || dc.client == nil {
+		return
+	}
+	paths := cfg.GetDecoyPaths()
+	if len(paths) == 0 {
+		return
+	}
+	siteOrigin := ""
+	if ref := cfg.GetRequestHeader().Get("Referer"); ref != "" {
+		if ru, err := url.Parse(ref); err == nil && ru.Scheme != "" && ru.Host != "" {
+			siteOrigin = ru.Scheme + "://" + ru.Host
+		}
+	}
+	for i, p := range paths {
+		u := base
+		u.Path = p
+		u.RawQuery = ""
+		req, err := http.NewRequestWithContext(context.WithoutCancel(ctx), http.MethodGet, u.String(), nil)
+		if err != nil {
+			continue
+		}
+		req.Header = cfg.GetRequestHeader()
+		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		req.Header.Set("Sec-Fetch-Mode", "navigate")
+		req.Header.Set("Sec-Fetch-Dest", "document")
+		req.Header.Del("Content-Length")
+		if i == 0 {
+			req.Header.Set("Sec-Fetch-Site", "none")
+			req.Header.Del("Referer")
+		} else {
+			req.Header.Set("Sec-Fetch-Site", "same-origin")
+			if siteOrigin != "" {
+				req.Header.Set("Referer", siteOrigin+paths[i-1])
+			}
+		}
+		resp, err := dc.client.Do(req)
+		if err != nil {
+			errors.LogInfoInner(ctx, err, "decoy GET failed ", p)
+			continue
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+}
+
 func decideHTTPVersion(tlsConfig *tls.Config, realityConfig *reality.Config) string {
 	if realityConfig != nil {
 		return "2"
@@ -354,9 +403,6 @@ func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.Me
 		}
 	}
 
-	requestURL.Path = transportConfiguration.GetNormalizedPath()
-	requestURL.RawQuery = transportConfiguration.GetNormalizedQuery()
-
 	httpClient, xmuxClient := getHTTPClient(ctx, dest, streamSettings)
 
 	mode := transportConfiguration.Mode
@@ -374,6 +420,12 @@ func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.Me
 	if mode != "stream-one" {
 		sessionId = transportConfiguration.GenerateSessionID()
 	}
+	pathOffset := transportConfiguration.NewPathSeqOffset()
+
+	requestURL.Path = transportConfiguration.GetRequestPath(0, pathOffset)
+	requestURL.RawQuery = transportConfiguration.GetNormalizedQuery()
+
+	fireDecoyGets(ctx, httpClient, requestURL, transportConfiguration)
 
 	errors.LogInfo(ctx, fmt.Sprintf("XHTTP is dialing to %s, mode %s, HTTP version %s, host %s", dest, mode, httpVersion, requestURL.Host))
 
@@ -419,7 +471,7 @@ func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.Me
 				requestURL2.Host += ":" + dest2.Port.String()
 			}
 		}
-		requestURL2.Path = config2.GetNormalizedPath()
+		requestURL2.Path = config2.GetRequestPath(0, pathOffset)
 		requestURL2.RawQuery = config2.GetNormalizedQuery()
 		httpClient2, xmuxClient2 = getHTTPClient(ctx, dest2, memory2)
 		errors.LogInfo(ctx, fmt.Sprintf("XHTTP is downloading from %s, mode %s, HTTP version %s, host %s", dest2, "stream-down", httpVersion2, requestURL2.Host))
@@ -451,7 +503,7 @@ func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.Me
 
 	var err error
 	if mode == "stream-one" {
-		requestURL.Path = transportConfiguration.GetNormalizedPath()
+		requestURL.Path = transportConfiguration.GetRequestPath(0, pathOffset)
 		if xmuxClient != nil {
 			xmuxClient.LeftRequests.Add(-1)
 		}
@@ -531,6 +583,8 @@ func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.Me
 				})
 
 				seqStr := strconv.FormatInt(seq, 10)
+				packetURL := requestURL
+				packetURL.Path = transportConfiguration.GetRequestPath(seq, pathOffset)
 				seq += 1
 
 				if scMinPostsIntervalMs.From > 0 {
@@ -547,7 +601,7 @@ func Dial(ctx context.Context, dest net.Destination, streamSettings *internet.Me
 				go func(hClient DialerClient) {
 					err := hClient.PostPacket(
 						ctx,
-						requestURL.String(),
+						packetURL.String(),
 						sessionId,
 						seqStr,
 						chunk,
