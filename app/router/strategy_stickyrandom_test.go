@@ -84,6 +84,46 @@ func TestStickyRandom_EnablesFallbackWhenAllDead(t *testing.T) {
 	}
 }
 
+type mockTryEnterController struct {
+	mockFallbackController
+	tried bool
+}
+
+func (m *mockTryEnterController) TryEnterFallbackMode() {
+	m.tried = true
+}
+
+func TestStickyRandom_TryEnterFallbackWhenAllDead(t *testing.T) {
+	obs := &mockObservatory{status: []*observatory.OutboundStatus{
+		{OutboundTag: "a", Alive: false},
+		{OutboundTag: "b", Alive: false},
+	}}
+	ctrl := &mockTryEnterController{}
+	s := NewStickyRandomStrategy()
+	s.observatory = obs
+	s.fallbackCtrl = ctrl
+	s.ctx = context.Background()
+
+	got := s.PickOutbound([]string{"a", "b"})
+	if got != "" {
+		t.Fatalf("expected empty tag, got %q", got)
+	}
+	if !ctrl.tried {
+		t.Fatal("expected TryEnterFallbackMode instead of unconditional enable")
+	}
+	if ctrl.enabled {
+		t.Fatal("expected fallback mode not enabled by the strategy itself")
+	}
+}
+
+func TestStickyRandom_Current(t *testing.T) {
+	s := NewStickyRandomStrategy()
+	s.current = "a"
+	if s.Current() != "a" {
+		t.Fatalf("expected current a, got %q", s.Current())
+	}
+}
+
 func TestStickyRandom_Reset(t *testing.T) {
 	s := NewStickyRandomStrategy()
 	s.current = "a"

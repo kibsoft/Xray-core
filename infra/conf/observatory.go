@@ -27,15 +27,31 @@ type FallbackObservatoryConfig struct {
 	ProbeURL                string            `json:"probeURL"`
 	ProbeInterval           duration.Duration `json:"probeInterval"`
 	EnableConcurrency       bool              `json:"enableConcurrency"`
+	ProbeOnError            *bool             `json:"probeOnError"`
+	IgnoreErrors            []string          `json:"ignoreErrors"`
+	ErrorProbeCooldown      duration.Duration `json:"errorProbeCooldown"`
+	RecoveryProbeInterval   duration.Duration `json:"recoveryProbeInterval"`
 }
 
 func (o *FallbackObservatoryConfig) Build() (proto.Message, error) {
+	probeOnError := true
+	if o.ProbeOnError != nil {
+		probeOnError = *o.ProbeOnError
+	}
+	ignoreErrors, err := fallback.NormalizeIgnoreErrors(o.IgnoreErrors)
+	if err != nil {
+		return nil, err
+	}
 	return &fallback.Config{
 		SubjectSelector:         o.SubjectSelector,
 		FallbackSubjectSelector: o.FallbackSubjectSelector,
 		ProbeUrl:                o.ProbeURL,
 		ProbeInterval:           int64(o.ProbeInterval),
 		EnableConcurrency:       o.EnableConcurrency,
+		RecoveryProbeInterval:   int64(o.RecoveryProbeInterval),
+		ErrorProbeCooldown:      int64(o.ErrorProbeCooldown),
+		DisableProbeOnError:     !probeOnError,
+		IgnoreErrors:            ignoreErrors,
 	}, nil
 }
 

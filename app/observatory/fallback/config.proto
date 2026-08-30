@@ -12,4 +12,8 @@ message Config {
   string probe_url = 3;
   int64 probe_interval = 4;
   bool enable_concurrency = 5;
+  int64 recovery_probe_interval = 7;
+  int64 error_probe_cooldown = 8;
+  bool disable_probe_on_error = 9;
+  repeated string ignore_errors = 10;
 }

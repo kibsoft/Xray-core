@@ -5,19 +5,112 @@ import (
 
 	"github.com/xtls/xray-core/app/observatory"
 	"github.com/xtls/xray-core/common/errors"
-	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/extension"
 	"github.com/xtls/xray-core/features/routing"
 )
 
 func (r *Router) EnableFallbackMode() {
-	if r.fallbackMode.CompareAndSwap(false, true) {
-		if core.FromContext(r.ctx) != nil {
-			core.OptionalFeatures(r.ctx, func(obs extension.FallbackProbeObservatory) {
-				obs.ProbeFallback()
-			})
+	r.fallbackMode.CompareAndSwap(false, true)
+}
+
+func (r *Router) TryEnterFallbackMode() {
+	if r.hasConfirmedAliveFallback() {
+		r.EnableFallbackMode()
+		return
+	}
+	r.requestPrimaryAndFallbackProbe()
+}
+
+func (r *Router) CurrentStickyTag() string {
+	if r.stickyStrategy == nil {
+		return ""
+	}
+	return r.stickyStrategy.Current()
+}
+
+func (r *Router) SyncFallbackMode() {
+	if r.hasAlivePrimary(r.primaryCandidates()) {
+		if r.fallbackMode.Load() {
+			r.DisableFallbackMode()
+		}
+		return
+	}
+	if r.hasConfirmedAliveFallback() {
+		r.EnableFallbackMode()
+		return
+	}
+	if r.fallbackMode.Load() {
+		r.DisableFallbackMode()
+	}
+}
+
+func (r *Router) requestPrimaryAndFallbackProbe() {
+	if r.observatory == nil {
+		return
+	}
+	obs, ok := r.observatory.(extension.FallbackHealthObservatory)
+	if !ok {
+		return
+	}
+	go obs.ProbePrimaryAndFallback()
+}
+
+func (r *Router) primaryCandidates() []string {
+	if r.stickyBalancerTag == "" {
+		return nil
+	}
+	balancer, ok := r.balancers[r.stickyBalancerTag]
+	if !ok {
+		return nil
+	}
+	candidates, err := balancer.SelectOutbounds()
+	if err != nil {
+		return nil
+	}
+	return candidates
+}
+
+func (r *Router) fallbackCandidates() []string {
+	if r.fallbackBalancerTag == "" {
+		return nil
+	}
+	balancer, ok := r.balancers[r.fallbackBalancerTag]
+	if !ok {
+		return nil
+	}
+	candidates, err := balancer.SelectOutbounds()
+	if err != nil {
+		return nil
+	}
+	return candidates
+}
+
+func (r *Router) hasConfirmedAliveFallback() bool {
+	return r.hasConfirmedAlive(r.fallbackCandidates())
+}
+
+func (r *Router) hasConfirmedAlive(candidates []string) bool {
+	if r.observatory == nil || len(candidates) == 0 {
+		return false
+	}
+	observeReport, err := r.observatory.GetObservation(r.ctx)
+	if err != nil {
+		return false
+	}
+	result, ok := observeReport.(*observatory.ObservationResult)
+	if !ok {
+		return false
+	}
+	statusMap := make(map[string]bool)
+	for _, status := range result.Status {
+		statusMap[status.OutboundTag] = status.Alive
+	}
+	for _, candidate := range candidates {
+		if alive, found := statusMap[candidate]; found && alive {
+			return true
 		}
 	}
+	return false
 }
 
 func (r *Router) DisableFallbackMode() {

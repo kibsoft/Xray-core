@@ -5,8 +5,43 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xtls/xray-core/app/observatory/fallback"
 	. "github.com/xtls/xray-core/infra/conf"
 )
+
+func TestFallbackObservatoryConfig_IgnoreErrors(t *testing.T) {
+	raw := `{
+		"subjectSelector": ["mux"],
+		"fallbackSubjectSelector": ["wl"]
+	}`
+	cfg := new(FallbackObservatoryConfig)
+	if err := json.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatal(err)
+	}
+	built, err := cfg.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb := built.(*fallback.Config)
+	if len(fb.IgnoreErrors) != 0 {
+		t.Fatalf("expected empty ignoreErrors by default, got %v", fb.IgnoreErrors)
+	}
+
+	cfg.IgnoreErrors = []string{"internalError", "wsasend"}
+	built, err = cfg.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := built.(*fallback.Config).IgnoreErrors
+	if len(got) != 2 || got[0] != fallback.IgnoreErrorInternal || got[1] != fallback.IgnoreErrorWSASend {
+		t.Fatalf("unexpected ignoreErrors: %v", got)
+	}
+
+	cfg.IgnoreErrors = []string{"not-a-real-error"}
+	if _, err := cfg.Build(); err == nil {
+		t.Fatal("expected unknown ignoreErrors value to fail Build")
+	}
+}
 
 func TestConfig_RequiresFallbackObservatory(t *testing.T) {
 	raw := `{

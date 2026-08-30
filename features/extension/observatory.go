@@ -24,6 +24,21 @@ type FallbackProbeObservatory interface {
 	ProbeFallback()
 }
 
+// OutboundErrorObserver is notified when a real outbound connection fails
+// and when user sessions start and end on an outbound tag.
+type OutboundErrorObserver interface {
+	ReportOutboundError(tag string, err error)
+	ReportOutboundSessionStart(tag string)
+	ReportOutboundSessionEnd(tag string, err error)
+}
+
+// FallbackHealthObservatory probes primary and fallback outbounds on demand.
+type FallbackHealthObservatory interface {
+	FallbackProbeObservatory
+	ProbeNow(tags []string)
+	ProbePrimaryAndFallback()
+}
+
 func ObservatoryType() interface{} {
 	return (*Observatory)(nil)
 }

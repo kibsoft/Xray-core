@@ -28,6 +28,10 @@ type Config struct {
 	ProbeUrl                string                 `protobuf:"bytes,3,opt,name=probe_url,json=probeUrl,proto3" json:"probe_url,omitempty"`
 	ProbeInterval           int64                  `protobuf:"varint,4,opt,name=probe_interval,json=probeInterval,proto3" json:"probe_interval,omitempty"`
 	EnableConcurrency       bool                   `protobuf:"varint,5,opt,name=enable_concurrency,json=enableConcurrency,proto3" json:"enable_concurrency,omitempty"`
+	RecoveryProbeInterval   int64                  `protobuf:"varint,7,opt,name=recovery_probe_interval,json=recoveryProbeInterval,proto3" json:"recovery_probe_interval,omitempty"`
+	ErrorProbeCooldown      int64                  `protobuf:"varint,8,opt,name=error_probe_cooldown,json=errorProbeCooldown,proto3" json:"error_probe_cooldown,omitempty"`
+	DisableProbeOnError     bool                   `protobuf:"varint,9,opt,name=disable_probe_on_error,json=disableProbeOnError,proto3" json:"disable_probe_on_error,omitempty"`
+	IgnoreErrors            []string               `protobuf:"bytes,10,rep,name=ignore_errors,json=ignoreErrors,proto3" json:"ignore_errors,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -97,18 +101,38 @@ func (x *Config) GetEnableConcurrency() bool {
 	return false
 }
 
+func (x *Config) GetRecoveryProbeInterval() int64 {
+	if x != nil {
+		return x.RecoveryProbeInterval
+	}
+	return 0
+}
+
+func (x *Config) GetErrorProbeCooldown() int64 {
+	if x != nil {
+		return x.ErrorProbeCooldown
+	}
+	return 0
+}
+
+func (x *Config) GetDisableProbeOnError() bool {
+	if x != nil {
+		return x.DisableProbeOnError
+	}
+	return false
+}
+
+func (x *Config) GetIgnoreErrors() []string {
+	if x != nil {
+		return x.IgnoreErrors
+	}
+	return nil
+}
+
 var File_app_observatory_fallback_config_proto protoreflect.FileDescriptor
 
 const file_app_observatory_fallback_config_proto_rawDesc = "" +
-	"\n" +
-	"%app/observatory/fallback/config.proto\x12\"xray.core.app.observatory.fallback\"\xe2\x01\n" +
-	"\x06Config\x12)\n" +
-	"\x10subject_selector\x18\x02 \x03(\tR\x0fsubjectSelector\x12:\n" +
-	"\x19fallback_subject_selector\x18\x06 \x03(\tR\x17fallbackSubjectSelector\x12\x1b\n" +
-	"\tprobe_url\x18\x03 \x01(\tR\bprobeUrl\x12%\n" +
-	"\x0eprobe_interval\x18\x04 \x01(\x03R\rprobeInterval\x12-\n" +
-	"\x12enable_concurrency\x18\x05 \x01(\bR\x11enableConcurrencyBy\n" +
-	"!com.xray.app.observatory.fallbackP\x01Z2github.com/xtls/xray-core/app/observatory/fallback\xaa\x02\x1dXray.App.Observatory.Fallbackb\x06proto3"
+	"\n%app/observatory/fallback/config.proto\x12\"xray.core.app.observatory.fallback\"\xa6\x03\n\x06Config\x12)\n\x10subject_selector\x18\x02 \x03(\tR\x0fsubjectSelector\x12:\n\x19fallback_subject_selector\x18\x06 \x03(\tR\x17fallbackSubjectSelector\x12\x1b\n\tprobe_url\x18\x03 \x01(\tR\x08probeUrl\x12%\n\x0eprobe_interval\x18\x04 \x01(\x03R\rprobeInterval\x12-\n\x12enable_concurrency\x18\x05 \x01(\x08R\x11enableConcurrency\x126\n\x17recovery_probe_interval\x18\x07 \x01(\x03R\x15recoveryProbeInterval\x120\n\x14error_probe_cooldown\x18\x08 \x01(\x03R\x12errorProbeCooldown\x123\n\x16disable_probe_on_error\x18\t \x01(\x08R\x13disableProbeOnError\x12#\n\rignore_errors\x18\n \x03(\tR\fignoreErrorsBy\n!com.xray.app.observatory.fallbackP\x01Z2github.com/xtls/xray-core/app/observatory/fallback\xaa\x02\x1dXray.App.Observatory.Fallbackb\x06proto3"
 
 var (
 	file_app_observatory_fallback_config_proto_rawDescOnce sync.Once

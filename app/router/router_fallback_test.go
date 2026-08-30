@@ -77,10 +77,13 @@ func TestRouter_FallbackRuNotDirect(t *testing.T) {
 
 func TestRouter_PickRouteRetryOnFallback(t *testing.T) {
 	r := newTestFallbackRouter(t)
-	r.stickyStrategy.observatory = &mockObservatory{status: []*observatory.OutboundStatus{
+	obs := &mockObservatory{status: []*observatory.OutboundStatus{
 		{OutboundTag: "primary-1", Alive: false},
 		{OutboundTag: "primary-2", Alive: false},
+		{OutboundTag: "fallback-1", Alive: true},
 	}}
+	r.observatory = obs
+	r.stickyStrategy.observatory = obs
 
 	ctx := session.ContextWithOutbounds(context.Background(), []*session.Outbound{{
 		Target: net.TCPDestination(net.DomainAddress("google.com"), 443),
@@ -94,6 +97,68 @@ func TestRouter_PickRouteRetryOnFallback(t *testing.T) {
 	}
 	if tag := route.GetOutboundTag(); tag != "fallback-1" && tag != "fallback-2" {
 		t.Fatalf("expected fallback outbound after retry, got %q", tag)
+	}
+}
+
+func TestRouter_TryEnterFallbackRequiresAliveFallback(t *testing.T) {
+	r := newTestFallbackRouter(t)
+	obs := &mockObservatory{status: []*observatory.OutboundStatus{
+		{OutboundTag: "primary-1", Alive: false},
+		{OutboundTag: "primary-2", Alive: false},
+		{OutboundTag: "fallback-1", Alive: false},
+		{OutboundTag: "fallback-2", Alive: false},
+	}}
+	r.observatory = obs
+	r.stickyStrategy.observatory = obs
+
+	r.TryEnterFallbackMode()
+	mode, err := r.GetRoutingMode()
+	common.Must(err)
+	if mode {
+		t.Fatal("expected primary mode when fallback outbounds are dead")
+	}
+}
+
+func TestRouter_SyncFallbackMode(t *testing.T) {
+	r := newTestFallbackRouter(t)
+	obs := &mockObservatory{status: []*observatory.OutboundStatus{
+		{OutboundTag: "primary-1", Alive: false},
+		{OutboundTag: "primary-2", Alive: false},
+		{OutboundTag: "fallback-1", Alive: true},
+	}}
+	r.observatory = obs
+
+	r.SyncFallbackMode()
+	mode, err := r.GetRoutingMode()
+	common.Must(err)
+	if !mode {
+		t.Fatal("expected fallback mode when mux are dead and fallback is alive")
+	}
+
+	obs.status[0].Alive = true
+	r.SyncFallbackMode()
+	mode, err = r.GetRoutingMode()
+	common.Must(err)
+	if mode {
+		t.Fatal("expected primary mode after a mux outbound recovered")
+	}
+}
+
+func TestRouter_SyncFallbackLeavesWhenBothDead(t *testing.T) {
+	r := newTestFallbackRouter(t)
+	r.EnableFallbackMode()
+	r.observatory = &mockObservatory{status: []*observatory.OutboundStatus{
+		{OutboundTag: "primary-1", Alive: false},
+		{OutboundTag: "primary-2", Alive: false},
+		{OutboundTag: "fallback-1", Alive: false},
+		{OutboundTag: "fallback-2", Alive: false},
+	}}
+
+	r.SyncFallbackMode()
+	mode, err := r.GetRoutingMode()
+	common.Must(err)
+	if mode {
+		t.Fatal("expected to leave fallback when fallback outbounds are also dead")
 	}
 }
 

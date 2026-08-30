@@ -19,6 +19,7 @@ import (
 	"github.com/xtls/xray-core/common/serial"
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/core"
+	"github.com/xtls/xray-core/features/extension"
 	"github.com/xtls/xray-core/features/outbound"
 	"github.com/xtls/xray-core/features/policy"
 	"github.com/xtls/xray-core/features/stats"
@@ -69,6 +70,7 @@ type Handler struct {
 	udp443          string
 	uplinkCounter   stats.Counter
 	downlinkCounter stats.Counter
+	instance        *core.Instance
 }
 
 // NewHandler creates a new Handler based on the given configuration.
@@ -80,6 +82,7 @@ func NewHandler(ctx context.Context, config *core.OutboundHandlerConfig) (outbou
 		outboundManager: v.GetFeature(outbound.ManagerType()).(outbound.Manager),
 		uplinkCounter:   uplinkCounter,
 		downlinkCounter: downlinkCounter,
+		instance:        v,
 	}
 
 	if config.SenderSettings != nil {
@@ -139,6 +142,7 @@ func NewHandler(ctx context.Context, config *core.OutboundHandlerConfig) (outbou
 								MaxConcurrency: uint32(config.Concurrency),
 								MaxConnection:  128,
 							},
+							OnError: h.notifyMuxDialError,
 						},
 					},
 				}
@@ -160,6 +164,7 @@ func NewHandler(ctx context.Context, config *core.OutboundHandlerConfig) (outbou
 								MaxConcurrency: uint32(config.XudpConcurrency),
 								MaxConnection:  128,
 							},
+							OnError: h.notifyMuxDialError,
 						},
 					},
 				}
@@ -213,6 +218,7 @@ func (h *Handler) Dispatch(ctx context.Context, link *transport.Link) {
 			if err != nil {
 				err := errors.New("failed to process mux outbound traffic").Base(err)
 				session.SubmitOutboundErrorToOriginator(ctx, err)
+				h.notifyOutboundError(ctx, err)
 				errors.LogInfo(ctx, err.Error())
 				common.Interrupt(link.Writer)
 				common.Interrupt(link.Reader)
@@ -221,7 +227,11 @@ func (h *Handler) Dispatch(ctx context.Context, link *transport.Link) {
 		if ob.Target.Network == net.Network_UDP && ob.Target.Port == 443 {
 			switch h.udp443 {
 			case "reject":
-				test(errors.New("XUDP rejected UDP/443 traffic").AtInfo())
+				err := errors.New("XUDP rejected UDP/443 traffic").AtInfo()
+				session.SubmitOutboundErrorToOriginator(ctx, err)
+				errors.LogInfo(ctx, err.Error())
+				common.Interrupt(link.Writer)
+				common.Interrupt(link.Reader)
 				return
 			case "skip":
 				goto out
@@ -231,23 +241,37 @@ func (h *Handler) Dispatch(ctx context.Context, link *transport.Link) {
 			if !h.xudp.Enabled {
 				goto out
 			}
-			test(h.xudp.Dispatch(ctx, link))
+			h.notifyOutboundSessionStart(ctx)
+			xudpErr := h.xudp.Dispatch(ctx, link)
+			test(xudpErr)
+			h.notifyOutboundSessionEnd(ctx, xudpErr)
 			return
 		}
 		if h.mux.Enabled {
-			test(h.mux.Dispatch(ctx, link))
+			h.notifyOutboundSessionStart(ctx)
+			muxErr := h.mux.Dispatch(ctx, link)
+			test(muxErr)
+			h.notifyOutboundSessionEnd(ctx, muxErr)
 			return
 		}
 	}
 out:
+	h.notifyOutboundSessionStart(ctx)
 	err := h.proxy.Process(ctx, link, h)
 	var errC error
 	if err != nil {
 		errC = errors.Cause(err)
+		// EOF is a normal close after a completed transfer. Canceled and
+		// closed-pipe are noise: observatory still sees them, but probes
+		// only if this tag has no parallel success.
+		if errC != nil && !goerrors.Is(errC, io.EOF) {
+			h.notifyOutboundError(ctx, err)
+		}
 		if goerrors.Is(errC, io.EOF) || goerrors.Is(errC, io.ErrClosedPipe) || goerrors.Is(errC, context.Canceled) {
 			err = nil
 		}
 	}
+	h.notifyOutboundSessionEnd(ctx, errC)
 	if err != nil {
 		// Ensure outbound ray is properly closed.
 		err := errors.New("failed to process outbound traffic").Base(err)
@@ -266,6 +290,53 @@ out:
 
 func (h *Handler) DestIpAddress() net.IP {
 	return internet.DestIpAddress()
+}
+
+func (h *Handler) outboundErrorObserver() extension.OutboundErrorObserver {
+	v := h.instance
+	if v == nil {
+		return nil
+	}
+	feature := v.GetFeature(extension.ObservatoryType())
+	if feature == nil {
+		return nil
+	}
+	reporter, ok := feature.(extension.OutboundErrorObserver)
+	if !ok {
+		return nil
+	}
+	return reporter
+}
+
+func (h *Handler) notifyOutboundSessionStart(ctx context.Context) {
+	if session.SkipOutboundErrorReportFromContext(ctx) {
+		return
+	}
+	if reporter := h.outboundErrorObserver(); reporter != nil {
+		reporter.ReportOutboundSessionStart(h.tag)
+	}
+}
+
+func (h *Handler) notifyOutboundSessionEnd(ctx context.Context, err error) {
+	if session.SkipOutboundErrorReportFromContext(ctx) {
+		return
+	}
+	if reporter := h.outboundErrorObserver(); reporter != nil {
+		reporter.ReportOutboundSessionEnd(h.tag, err)
+	}
+}
+
+func (h *Handler) notifyOutboundError(ctx context.Context, err error) {
+	if session.SkipOutboundErrorReportFromContext(ctx) {
+		return
+	}
+	h.notifyMuxDialError(err)
+}
+
+func (h *Handler) notifyMuxDialError(err error) {
+	if reporter := h.outboundErrorObserver(); reporter != nil {
+		reporter.ReportOutboundError(h.tag, err)
+	}
 }
 
 // Dial implements internet.Dialer.

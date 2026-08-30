@@ -37,6 +37,12 @@ func (s *StickyRandomStrategy) Reset() {
 	s.current = ""
 }
 
+func (s *StickyRandomStrategy) Current() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.current
+}
+
 func (s *StickyRandomStrategy) GetPrincipleTarget(strings []string) []string {
 	if s.current != "" {
 		return []string{s.current}
@@ -62,7 +68,11 @@ func (s *StickyRandomStrategy) PickOutbound(candidates []string) string {
 	alive := s.filterAlive(candidates)
 	if len(alive) == 0 {
 		if s.fallbackCtrl != nil {
-			s.fallbackCtrl.EnableFallbackMode()
+			if tryer, ok := s.fallbackCtrl.(interface{ TryEnterFallbackMode() }); ok {
+				tryer.TryEnterFallbackMode()
+			} else {
+				s.fallbackCtrl.EnableFallbackMode()
+			}
 		}
 		s.Reset()
 		return ""
