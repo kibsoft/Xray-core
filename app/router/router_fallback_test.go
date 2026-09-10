@@ -147,18 +147,22 @@ func TestRouter_SyncFallbackMode(t *testing.T) {
 func TestRouter_SyncFallbackLeavesWhenBothDead(t *testing.T) {
 	r := newTestFallbackRouter(t)
 	r.EnableFallbackMode()
-	r.observatory = &mockObservatory{status: []*observatory.OutboundStatus{
+	obs := &mockObservatory{status: []*observatory.OutboundStatus{
 		{OutboundTag: "primary-1", Alive: false},
 		{OutboundTag: "primary-2", Alive: false},
 		{OutboundTag: "fallback-1", Alive: false},
 		{OutboundTag: "fallback-2", Alive: false},
 	}}
+	r.observatory = obs
 
 	r.SyncFallbackMode()
 	mode, err := r.GetRoutingMode()
 	common.Must(err)
 	if mode {
 		t.Fatal("expected to leave fallback when fallback outbounds are also dead")
+	}
+	if len(obs.status) != 4 {
+		t.Fatalf("expected Dead marks kept when both dead, got %v", obs.status)
 	}
 }
 
@@ -193,6 +197,38 @@ func TestRouter_GetRoutingMode(t *testing.T) {
 	mode, err = r.GetRoutingMode()
 	if err != nil || !mode {
 		t.Fatalf("expected fallback mode, got mode=%v err=%v", mode, err)
+	}
+}
+
+func TestRouter_SyncFallback_PrimaryRecoveredClearsObservation(t *testing.T) {
+	r := newTestFallbackRouter(t)
+	obs := &mockObservatory{status: []*observatory.OutboundStatus{
+		{OutboundTag: "primary-1", Alive: true},
+		{OutboundTag: "fallback-1", Alive: true},
+	}}
+	r.observatory = obs
+
+	r.EnableFallbackMode()
+	r.SyncFallbackMode()
+	if r.IsFallbackMode() {
+		t.Fatal("expected primary mode after recovery")
+	}
+	if len(obs.status) != 0 {
+		t.Fatalf("expected observation cleared on primary recovery, got %v", obs.status)
+	}
+}
+
+func TestRouter_DisableFallbackMode_DoesNotClear(t *testing.T) {
+	r := newTestFallbackRouter(t)
+	obs := &mockObservatory{status: []*observatory.OutboundStatus{
+		{OutboundTag: "primary-1", Alive: false},
+	}}
+	r.observatory = obs
+
+	r.EnableFallbackMode()
+	r.DisableFallbackMode()
+	if len(obs.status) != 1 {
+		t.Fatal("expected DisableFallbackMode alone not to clear observation")
 	}
 }
 

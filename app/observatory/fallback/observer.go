@@ -47,6 +47,13 @@ type Observer struct {
 	traffic   map[string]*tagTraffic
 }
 
+// defaultStartupProbeDelay waits for the network path (e.g. LTE after VPN up)
+// before the cold-start primary+fallback health check.
+const defaultStartupProbeDelay = time.Second
+
+// startupProbeDelay is the wait before startupProbe runs. Tests may shorten it.
+var startupProbeDelay = defaultStartupProbeDelay
+
 func (o *Observer) ProbeIntervalDuration() time.Duration {
 	if o.config != nil && o.config.RecoveryProbeInterval != 0 {
 		return time.Duration(o.config.RecoveryProbeInterval)
@@ -102,6 +109,7 @@ func (o *Observer) Start() error {
 			o.wake = make(chan struct{}, 1)
 		}
 		go o.background()
+		go o.startupProbe()
 	}
 	return nil
 }
@@ -111,6 +119,45 @@ func (o *Observer) Close() error {
 		return o.finished.Close()
 	}
 	return nil
+}
+
+// startupProbe runs once after Start so cold-start can enter fallback without
+// waiting for outbound dial retries to exhaust (~5x16s).
+func (o *Observer) startupProbe() {
+	if o.finished == nil {
+		return
+	}
+	timer := time.NewTimer(startupProbeDelay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-o.finished.Wait():
+		return
+	}
+	if o.finished.Done() {
+		return
+	}
+	o.ProbePrimaryAndFallback()
+	o.forgetStartupObservationIfPrimary()
+}
+
+// forgetStartupObservationIfPrimary drops probe results after a cold-start
+// decide when staying in primary mode, so later error follow-up treats
+// siblings as unprobed again (Wi-Fi→LTE sweep). Status is kept in fallback
+// mode so recovery does not treat unprobed primary as alive.
+func (o *Observer) forgetStartupObservationIfPrimary() {
+	if o.inFallbackMode() {
+		return
+	}
+	o.ClearObservationStatus()
+}
+
+// ClearObservationStatus drops all probe results so outbounds are unprobed
+// again. Used after cold-start primary decide and when leaving fallback mode.
+func (o *Observer) ClearObservationStatus() {
+	o.statusLock.Lock()
+	defer o.statusLock.Unlock()
+	o.status = nil
 }
 
 func (o *Observer) ProbeFallback() {
@@ -232,13 +279,14 @@ func (o *Observer) planErrorFollowUp(tag string, alive bool) errorFollowUpPlan {
 	}
 	plan := errorFollowUpPlan{wake: true}
 	if !alive {
-		if !o.hasConfirmedAlivePrimaryExcept(tag) {
-			plan.probePrimary = o.primaryOutboundTagsExcept(tag)
-		}
+		// Always re-check siblings: stale Wi-Fi Alive must not block a later
+		// Wi-Fi→LTE sweep. One dead node on a healthy network costs an extra
+		// generate_204 round — acceptable for reliable network-switch failover.
+		plan.probePrimary = o.primaryOutboundTagsExcept(tag)
 		// Ping whitelist only when we still need it to decide whether to
 		// enter fallback. Already in fallback, or a fallback node already
 		// confirmed alive: mux recovery must not re-probe generate_204.
-		if !o.hasConfirmedAlivePrimaryExcept("") && o.needsFallbackHealthCheck() {
+		if o.needsFallbackHealthCheck() {
 			plan.probeFallback = o.fallbackOutboundTags()
 		}
 	}

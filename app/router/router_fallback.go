@@ -31,7 +31,11 @@ func (r *Router) CurrentStickyTag() string {
 func (r *Router) SyncFallbackMode() {
 	if r.hasAlivePrimary(r.primaryCandidates()) {
 		if r.fallbackMode.Load() {
+			// Primary recovered: drop stale Alive so a later network switch
+			// can sweep primaries again. Do not clear when leaving because
+			// fallback is also dead — Dead marks must keep sticky off them.
 			r.DisableFallbackMode()
+			r.forgetObservatoryAfterLeaveFallback()
 		}
 		return
 	}
@@ -120,6 +124,18 @@ func (r *Router) DisableFallbackMode() {
 	}
 }
 
+// forgetObservatoryAfterLeaveFallback clears probe Alive marks so the next
+// network failure can sweep primaries again (stale Wi-Fi Alive must not block).
+// Call only after primary recovery — not when leaving because fallback died too.
+func (r *Router) forgetObservatoryAfterLeaveFallback() {
+	if r.observatory == nil {
+		return
+	}
+	if clearer, ok := r.observatory.(interface{ ClearObservationStatus() }); ok {
+		clearer.ClearObservationStatus()
+	}
+}
+
 func (r *Router) IsFallbackMode() bool {
 	return r.fallbackMode.Load()
 }
@@ -147,6 +163,7 @@ func (r *Router) recoveryWatcher() {
 			}
 			if r.hasAlivePrimary(candidates) {
 				r.DisableFallbackMode()
+				r.forgetObservatoryAfterLeaveFallback()
 			}
 		case <-r.recoveryFinished.Wait():
 			return

@@ -48,12 +48,15 @@ Use `fallbackObservatory` instead of `observatory` / `burstObservatory` when fal
 | `errorProbeCooldown` | Minimum time between error-driven probes. Default `3s` |
 | `enableConcurrency` | Probe several outbounds in parallel when a full check runs |
 
+- **Startup:** once after Xray start, wait ~1s then run `ProbePrimaryAndFallback`. If all primary outbounds are dead and at least one fallback outbound is alive, fallback mode is enabled immediately (avoids waiting for dial retries on cold-start LTE). If routing stays in **primary** mode after that probe, observation status is cleared so outbounds are unprobed again (Wi-Fi→LTE error follow-up can sweep all primaries). If already in **fallback** mode, status is kept.
 - Healthy primary: no pings, or one sticky heartbeat at `probeInterval`.
-- Mux outbound error: probe that outbound. If it is dead and no other primary is confirmed alive, probe remaining primaries. Probe fallback outbounds only when whitelist health is still unknown and routing is not already in fallback.
+- Mux outbound error: probe that outbound. If it is dead, always probe remaining primaries (stale Wi-Fi `Alive` must not block a later Wi-Fi→LTE sweep). Probe fallback outbounds when whitelist health is still unknown and routing is not already in fallback.
 - Whitelist / fallback outbound error: probe that fallback node only (and sibling fallbacks if it is dead). Do not wake mux recovery. If a primary is already confirmed alive, ignore leftover fallback errors (XHTTP `INTERNAL_ERROR` after leaving fallback).
 - With `ignoreErrors: ["internalError", "wsasend"]`, HTTP/2 `INTERNAL_ERROR` and local `wsasend` aborts do not start a probe. Dial/timeout/refused still do. Empty list ignores nothing.
 - **Inflight / burst gate** (per outbound tag): `EOF` and a clean finish count as success. `context.Canceled`, closed-pipe, and local loopback SOCKS resets (`wsarecv` / forcibly closed on `127.0.0.1`) are noise, not death. Noise probes only when this tag has no other in-flight session, no success in the last 2s, and at least 3 noise errors in that window. Hard failures (`connectex`, timeout, refused, reset from a public remote) still probe immediately. Sibling tags do not share inflight. Observatory probes do not count as user sessions.
 - Fallback mode: primary subjects on `recoveryProbeInterval`; fallback subjects on first enter (unknown health) / on their errors. Mux recovery ticks do not re-ping **alive** whitelist nodes. Fallback tags already marked dead are re-probed on the same interval so they can return to the balancer if they recover.
+- **Leave fallback (primary recovered):** observation status is cleared (same as startup primary-mode clear) so a later Wi-Fi→LTE switch is not blocked by stale `Alive=true` from recovery probes.
+- **Leave fallback (both dead):** status is kept. Clearing would treat unprobed primaries as alive and delay the next fallback entry after sticky fails over.
 - Observatory probes do not count as outbound errors (they do not retrigger probing).
 
 ## Example config

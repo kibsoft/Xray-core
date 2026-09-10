@@ -9,6 +9,7 @@ import (
 
 	"github.com/xtls/xray-core/app/observatory"
 	"github.com/xtls/xray-core/common/errors"
+	"github.com/xtls/xray-core/common/signal/done"
 	"github.com/xtls/xray-core/features/outbound"
 	"github.com/xtls/xray-core/features/routing"
 	"golang.org/x/net/http2"
@@ -304,6 +305,25 @@ func TestPlanErrorFollowUp_MuxAllDeadStillProbesFallback(t *testing.T) {
 	}
 	if len(plan.probeFallback) != 1 || plan.probeFallback[0] != "wl-beget" {
 		t.Fatalf("expected fallback probe, got %v", plan.probeFallback)
+	}
+}
+
+func TestPlanErrorFollowUp_MuxDeadSweepsEvenWhenSiblingAlive(t *testing.T) {
+	o := newMuxObserverForFollowUp()
+	o.status = []*observatory.OutboundStatus{
+		{OutboundTag: "bgspb-mux", Alive: false},
+		{OutboundTag: "aespb-mux", Alive: true},
+		{OutboundTag: "twspb-mux", Alive: true},
+	}
+	plan := o.planErrorFollowUp("bgspb-mux", false)
+	if !plan.wake {
+		t.Fatal("mux error follow-up should wake the recovery loop")
+	}
+	if len(plan.probePrimary) != 2 {
+		t.Fatalf("expected sibling sweep despite Alive marks, got %v", plan.probePrimary)
+	}
+	if len(plan.probeFallback) != 1 || plan.probeFallback[0] != "wl-beget" {
+		t.Fatalf("expected wl probe to decide fallback entry, got %v", plan.probeFallback)
 	}
 }
 
@@ -678,6 +698,82 @@ func TestShouldStartErrorProbe_MuxFollowUpStillSkippedInFallback(t *testing.T) {
 	hard := errors.New("connectex: forbidden")
 	if o.shouldStartErrorProbe("bgspb-mux", hard) {
 		t.Fatal("known-dead mux with a live sibling must not start an error probe")
+	}
+}
+
+func TestStartupProbe_SkippedAfterClose(t *testing.T) {
+	old := startupProbeDelay
+	startupProbeDelay = 200 * time.Millisecond
+	defer func() { startupProbeDelay = old }()
+
+	ohm := &mockOutboundManager{
+		mockHandlerSelector: mockHandlerSelector{
+			bySelector: map[string][]string{
+				"primary-":  {"primary-1"},
+				"fallback-": {"fallback-1"},
+			},
+		},
+	}
+	o := &Observer{
+		config: &Config{
+			SubjectSelector:         []string{"primary-"},
+			FallbackSubjectSelector: []string{"fallback-"},
+		},
+		ohm:      ohm,
+		finished: done.New(),
+		wake:     make(chan struct{}, 1),
+	}
+	if err := o.finished.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	finished := make(chan struct{})
+	go func() {
+		o.startupProbe()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("startupProbe hung after Close")
+	}
+
+	if len(ohm.lastSelectors) != 0 {
+		t.Fatalf("expected no outbound select after Close during startup delay, got %v", ohm.lastSelectors)
+	}
+	if o.isProbing() {
+		t.Fatal("expected probing=false after Close skipped startup probe")
+	}
+}
+
+func TestForgetStartupObservationIfPrimary_ClearsStatus(t *testing.T) {
+	o := &Observer{
+		modeCtrl: &mockModeController{fallback: false},
+		status: []*observatory.OutboundStatus{
+			{OutboundTag: "primary-1", Alive: true},
+			{OutboundTag: "fallback-1", Alive: true},
+		},
+	}
+	o.forgetStartupObservationIfPrimary()
+	if len(o.status) != 0 {
+		t.Fatalf("expected empty status in primary mode, got %v", o.status)
+	}
+}
+
+func TestForgetStartupObservationIfPrimary_KeepsStatusInFallback(t *testing.T) {
+	o := &Observer{
+		modeCtrl: &mockModeController{fallback: true},
+		status: []*observatory.OutboundStatus{
+			{OutboundTag: "primary-1", Alive: false},
+			{OutboundTag: "fallback-1", Alive: true},
+		},
+	}
+	o.forgetStartupObservationIfPrimary()
+	if len(o.status) != 2 {
+		t.Fatalf("expected status retained in fallback mode, got %v", o.status)
+	}
+	if o.status[0].Alive || !o.status[1].Alive {
+		t.Fatalf("expected primary dead and fallback alive retained, got %+v %+v", o.status[0], o.status[1])
 	}
 }
 

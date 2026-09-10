@@ -19,6 +19,14 @@ func (m *mockObservatory) GetObservation(ctx context.Context) (proto.Message, er
 	return &observatory.ObservationResult{Status: m.status}, nil
 }
 
+func (m *mockObservatory) ClearObservationStatus() {
+	m.status = nil
+}
+
+func (m *mockObservatory) ProbeFallback()              {}
+func (m *mockObservatory) ProbeNow(tags []string)      {}
+func (m *mockObservatory) ProbePrimaryAndFallback()    {}
+
 type mockFallbackController struct {
 	enabled bool
 }
