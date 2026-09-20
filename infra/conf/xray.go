@@ -347,22 +347,23 @@ type Config struct {
 	// left for returning error
 	Transport map[string]json.RawMessage `json:"transport"`
 
-	LogConfig        *LogConfig              `json:"log"`
-	RouterConfig     *RouterConfig           `json:"routing"`
-	DNSConfig        *DNSConfig              `json:"dns"`
-	InboundConfigs   []InboundDetourConfig   `json:"inbounds"`
-	OutboundConfigs  []OutboundDetourConfig  `json:"outbounds"`
-	Policy           *PolicyConfig           `json:"policy"`
-	API              *APIConfig              `json:"api"`
-	Metrics          *MetricsConfig          `json:"metrics"`
-	Stats            *StatsConfig            `json:"stats"`
-	Reverse          *ReverseConfig          `json:"reverse"`
-	FakeDNS          *FakeDNSConfig          `json:"fakeDns"`
-	Observatory          *ObservatoryConfig          `json:"observatory"`
-	BurstObservatory     *BurstObservatoryConfig     `json:"burstObservatory"`
-	FallbackObservatory  *FallbackObservatoryConfig  `json:"fallbackObservatory"`
-	Version          *VersionConfig          `json:"version"`
-	Geodata          *GeodataConfig          `json:"geodata"`
+	LogConfig           *LogConfig                 `json:"log"`
+	RouterConfig        *RouterConfig              `json:"routing"`
+	DNSConfig           *DNSConfig                 `json:"dns"`
+	InboundConfigs      []InboundDetourConfig      `json:"inbounds"`
+	OutboundConfigs     []OutboundDetourConfig     `json:"outbounds"`
+	Policy              *PolicyConfig              `json:"policy"`
+	SpeedLimit          *SpeedLimitConfig          `json:"speedLimit"`
+	API                 *APIConfig                 `json:"api"`
+	Metrics             *MetricsConfig             `json:"metrics"`
+	Stats               *StatsConfig               `json:"stats"`
+	Reverse             *ReverseConfig             `json:"reverse"`
+	FakeDNS             *FakeDNSConfig             `json:"fakeDns"`
+	Observatory         *ObservatoryConfig         `json:"observatory"`
+	BurstObservatory    *BurstObservatoryConfig    `json:"burstObservatory"`
+	FallbackObservatory *FallbackObservatoryConfig `json:"fallbackObservatory"`
+	Version             *VersionConfig             `json:"version"`
+	Geodata             *GeodataConfig             `json:"geodata"`
 }
 
 func (c *Config) findInboundTag(tag string) int {
@@ -405,6 +406,9 @@ func (c *Config) Override(o *Config, fn string) {
 	}
 	if o.Policy != nil {
 		c.Policy = o.Policy
+	}
+	if o.SpeedLimit != nil {
+		c.SpeedLimit = o.SpeedLimit
 	}
 	if o.API != nil {
 		c.API = o.API
@@ -489,9 +493,18 @@ func (c *Config) Build() (*core.Config, error) {
 		return nil, err
 	}
 
+	dispatcherConf := &dispatcher.Config{}
+	if c.SpeedLimit != nil {
+		speedLimit, err := c.SpeedLimit.Build()
+		if err != nil {
+			return nil, errors.New("failed to build speedLimit configuration").Base(err)
+		}
+		dispatcherConf.SpeedLimit = speedLimit
+	}
+
 	config := &core.Config{
 		App: []*serial.TypedMessage{
-			serial.ToTypedMessage(&dispatcher.Config{}),
+			serial.ToTypedMessage(dispatcherConf),
 			serial.ToTypedMessage(&proxyman.InboundConfig{}),
 			serial.ToTypedMessage(&proxyman.OutboundConfig{}),
 		},

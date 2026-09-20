@@ -719,6 +719,9 @@ func CopyRawConnIfExist(ctx context.Context, readerConn net.Conn, writerConn net
 	readerConn, readCounter, _ := UnwrapRawConn(readerConn)
 	writerConn, _, writeCounter := UnwrapRawConn(writerConn)
 	reader := buf.NewReader(readerConn)
+	if dispatcher.WriterHasRateLimit(writer) {
+		return readV(ctx, reader, writer, timer, readCounter)
+	}
 	if runtime.GOOS != "linux" && runtime.GOOS != "android" {
 		return readV(ctx, reader, writer, timer, readCounter)
 	}

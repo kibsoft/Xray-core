@@ -627,7 +627,7 @@ func (h *Handler) Process(ctx context.Context, network net.Network, connection s
 		if err != nil {
 			return err
 		}
-		return r.NewMux(ctx, dispatcher.WrapLink(ctx, h.policyManager, h.stats, &transport.Link{Reader: clientReader, Writer: clientWriter}), h.observer)
+		return r.NewMux(ctx, dispatcher.WrapLink(ctx, h.policyManager, h.stats, dispatcher.SpeedFrom(h.defaultDispatcher), &transport.Link{Reader: clientReader, Writer: clientWriter}), h.observer)
 	}
 
 	if err := dispatch.DispatchLink(

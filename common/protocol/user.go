@@ -53,3 +53,25 @@ type MemoryUser struct {
 	Email   string
 	Level   uint32
 }
+
+// UserIDer is implemented by protocol accounts that expose a stable user id (for example a VLESS UUID).
+type UserIDer interface {
+	UserID() string
+}
+
+// Identifiers returns email and protocol user id, skipping empty values.
+func (u *MemoryUser) Identifiers() []string {
+	if u == nil {
+		return nil
+	}
+	ids := make([]string, 0, 2)
+	if u.Email != "" {
+		ids = append(ids, u.Email)
+	}
+	if ider, ok := u.Account.(UserIDer); ok {
+		if id := ider.UserID(); id != "" && id != u.Email {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
