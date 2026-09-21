@@ -9,9 +9,11 @@ import (
 
 	"github.com/xtls/xray-core/app/observatory"
 	"github.com/xtls/xray-core/common/errors"
+	v2net "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/signal/done"
 	"github.com/xtls/xray-core/features/outbound"
 	"github.com/xtls/xray-core/features/routing"
+	"github.com/xtls/xray-core/transport/internet/tagged"
 	"golang.org/x/net/http2"
 )
 
@@ -63,6 +65,15 @@ type mockModeController struct {
 func (m *mockModeController) EnableFallbackMode()  { m.fallback = true }
 func (m *mockModeController) DisableFallbackMode() { m.fallback = false }
 func (m *mockModeController) IsFallbackMode() bool { return m.fallback }
+
+func stubTaggedDialer(t *testing.T) {
+	t.Helper()
+	old := tagged.Dialer
+	tagged.Dialer = func(context.Context, routing.Dispatcher, v2net.Destination, string) (v2net.Conn, error) {
+		return nil, errors.New("test stub dial")
+	}
+	t.Cleanup(func() { tagged.Dialer = old })
+}
 
 func TestActiveSelectors_PrimaryOnly(t *testing.T) {
 	o := &Observer{
@@ -221,6 +232,31 @@ func TestReportOutboundErrorIgnoredWhenProbing(t *testing.T) {
 	o.ReportOutboundError("bgspb-mux", nil)
 	if !o.lastErrorProbe.IsZero() {
 		t.Fatal("probe-in-flight error report must not start an error probe")
+	}
+	o.probeMu.Lock()
+	pending := o.pendingErrorTag
+	o.pendingErrorTag = ""
+	o.probeMu.Unlock()
+	if pending != "bgspb-mux" {
+		t.Fatalf("expected pending follow-up for bgspb-mux, got %q", pending)
+	}
+	o.endProbe()
+}
+
+func TestShouldStartErrorProbe_NoiseNotQueuedWhileProbing(t *testing.T) {
+	o := newMuxObserverForFollowUp()
+	if !o.tryBeginProbe() {
+		t.Fatal("expected to begin probe")
+	}
+	o.ReportOutboundSessionStart("wl-beget")
+	if o.shouldStartErrorProbe("wl-beget", io.ErrClosedPipe) {
+		t.Fatal("isolated closed-pipe must not probe")
+	}
+	o.probeMu.Lock()
+	pending := o.pendingErrorTag
+	o.probeMu.Unlock()
+	if pending != "" {
+		t.Fatalf("noise must not be queued while probing, got %q", pending)
 	}
 	o.endProbe()
 }
@@ -744,6 +780,155 @@ func TestStartupProbe_SkippedAfterClose(t *testing.T) {
 	if o.isProbing() {
 		t.Fatal("expected probing=false after Close skipped startup probe")
 	}
+}
+
+func TestStartupProbe_WaitsUntilBusyEnds(t *testing.T) {
+	old := startupProbeDelay
+	startupProbeDelay = 50 * time.Millisecond
+	defer func() { startupProbeDelay = old }()
+	stubTaggedDialer(t)
+
+	ohm := &mockOutboundManager{
+		mockHandlerSelector: mockHandlerSelector{
+			bySelector: map[string][]string{
+				"primary-":  {"primary-1"},
+				"fallback-": {"fallback-1"},
+			},
+		},
+	}
+	o := &Observer{
+		config: &Config{
+			SubjectSelector:         []string{"primary-"},
+			FallbackSubjectSelector: []string{"fallback-"},
+		},
+		ctx:      context.Background(),
+		ohm:      ohm,
+		finished: done.New(),
+		wake:     make(chan struct{}, 1),
+	}
+	if !o.tryBeginProbe() {
+		t.Fatal("expected to occupy the probe slot")
+	}
+
+	finished := make(chan struct{})
+	go func() {
+		o.startupProbe()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+		t.Fatal("startupProbe must wait while the slot is busy")
+	case <-time.After(150 * time.Millisecond):
+	}
+	if len(ohm.lastSelectors) != 0 {
+		t.Fatalf("expected no outbound select while waiting, got %v", ohm.lastSelectors)
+	}
+
+	o.endProbe()
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("startupProbe did not run after the slot was released")
+	}
+	if len(ohm.lastSelectors) == 0 {
+		t.Fatal("expected startup probe to select outbounds after waiting")
+	}
+	if o.isProbing() {
+		t.Fatal("expected probing=false after startup probe finished")
+	}
+}
+
+func TestStartupProbe_CloseDuringWaitDoesNotProbeOrClear(t *testing.T) {
+	old := startupProbeDelay
+	startupProbeDelay = 20 * time.Millisecond
+	defer func() { startupProbeDelay = old }()
+
+	ohm := &mockOutboundManager{
+		mockHandlerSelector: mockHandlerSelector{
+			bySelector: map[string][]string{
+				"primary-":  {"primary-1"},
+				"fallback-": {"fallback-1"},
+			},
+		},
+	}
+	o := &Observer{
+		config: &Config{
+			SubjectSelector:         []string{"primary-"},
+			FallbackSubjectSelector: []string{"fallback-"},
+		},
+		ohm:      ohm,
+		finished: done.New(),
+		wake:     make(chan struct{}, 1),
+		status: []*observatory.OutboundStatus{
+			{OutboundTag: "primary-1", Alive: true},
+		},
+	}
+	if !o.tryBeginProbe() {
+		t.Fatal("expected to occupy the probe slot")
+	}
+
+	finished := make(chan struct{})
+	go func() {
+		o.startupProbe()
+		close(finished)
+	}()
+	time.Sleep(80 * time.Millisecond)
+	if err := o.finished.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("startupProbe hung after Close during slot wait")
+	}
+	if len(ohm.lastSelectors) != 0 {
+		t.Fatalf("expected no outbound select after Close during wait, got %v", ohm.lastSelectors)
+	}
+	if len(o.status) != 1 {
+		t.Fatalf("skipped startup must not clear status, got %v", o.status)
+	}
+	o.probeMu.Lock()
+	o.pendingErrorTag = ""
+	o.probeMu.Unlock()
+	o.endProbe()
+}
+
+func TestReportOutboundError_QueuesFollowUpUntilEndProbe(t *testing.T) {
+	o := newMuxObserverForFollowUp()
+	o.finished = done.New()
+	o.config.ErrorProbeCooldown = int64(time.Hour)
+	o.lastErrorProbe = time.Now()
+	if !o.tryBeginProbe() {
+		t.Fatal("expected to begin probe")
+	}
+	hard := errors.New("i/o timeout")
+	saved := o.lastErrorProbe
+	o.ReportOutboundError("bgspb-mux", hard)
+	if !o.lastErrorProbe.Equal(saved) {
+		t.Fatal("queued follow-up must not start an error probe")
+	}
+	o.probeMu.Lock()
+	pending := o.pendingErrorTag
+	o.probeMu.Unlock()
+	if pending != "bgspb-mux" {
+		t.Fatalf("expected queued bgspb-mux, got %q", pending)
+	}
+	if err := o.finished.Close(); err != nil {
+		t.Fatal(err)
+	}
+	o.endProbe()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		o.probeMu.Lock()
+		pending = o.pendingErrorTag
+		probing := o.probing
+		o.probeMu.Unlock()
+		if pending == "" && !probing {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("queued follow-up must drain after endProbe without taking the slot (cooldown + closed)")
 }
 
 func TestForgetStartupObservationIfPrimary_ClearsStatus(t *testing.T) {

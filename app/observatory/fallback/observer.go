@@ -38,10 +38,11 @@ type Observer struct {
 	dispatcher routing.Dispatcher
 	modeCtrl   routing.FallbackModeController
 
-	probeMu        sync.Mutex
-	probing        bool
-	lastErrorProbe time.Time
-	wake           chan struct{}
+	probeMu         sync.Mutex
+	probing         bool
+	lastErrorProbe  time.Time
+	pendingErrorTag string
+	wake            chan struct{}
 
 	trafficMu sync.Mutex
 	traffic   map[string]*tagTraffic
@@ -50,6 +51,10 @@ type Observer struct {
 // defaultStartupProbeDelay waits for the network path (e.g. LTE after VPN up)
 // before the cold-start primary+fallback health check.
 const defaultStartupProbeDelay = time.Second
+
+// probeSlotPollInterval is the wait between tryBeginProbe attempts when
+// startupProbe finds the slot busy (error-driven sweep after Xray restart).
+const probeSlotPollInterval = 100 * time.Millisecond
 
 // startupProbeDelay is the wait before startupProbe runs. Tests may shorten it.
 var startupProbeDelay = defaultStartupProbeDelay
@@ -122,7 +127,9 @@ func (o *Observer) Close() error {
 }
 
 // startupProbe runs once after Start so cold-start can enter fallback without
-// waiting for outbound dial retries to exhaust (~5x16s).
+// waiting for outbound dial retries to exhaust (~5x16s). If an error-driven
+// probe already holds the slot (TUN still up after Xray restart), wait for it
+// instead of skipping. Status is cleared only after this probe actually ran.
 func (o *Observer) startupProbe() {
 	if o.finished == nil {
 		return
@@ -137,8 +144,14 @@ func (o *Observer) startupProbe() {
 	if o.finished.Done() {
 		return
 	}
-	o.ProbePrimaryAndFallback()
+	if !o.waitBeginProbe() {
+		return
+	}
+	o.probeOutbounds(o.primaryAndFallbackTags())
+	o.syncFallbackMode()
+	o.signalWake()
 	o.forgetStartupObservationIfPrimary()
+	o.endProbe()
 }
 
 // forgetStartupObservationIfPrimary drops probe results after a cold-start
@@ -219,13 +232,13 @@ func (o *Observer) shouldStartErrorProbe(tag string, err error) bool {
 	if !o.isObservedTag(tag) {
 		return false
 	}
-	if o.isProbing() {
-		return false
-	}
 	if isNoiseError(err) && o.shouldSkipNoiseFollowUp(tag) {
 		return false
 	}
 	if o.shouldSkipErrorFollowUp(tag) {
+		return false
+	}
+	if o.notePendingIfProbing(tag) {
 		return false
 	}
 	return true
@@ -497,10 +510,49 @@ func (o *Observer) tryBeginProbe() bool {
 	return true
 }
 
+// waitBeginProbe blocks until tryBeginProbe succeeds or the observer is closed.
+func (o *Observer) waitBeginProbe() bool {
+	for {
+		if o.tryBeginProbe() {
+			return true
+		}
+		if o.finished != nil && o.finished.Done() {
+			return false
+		}
+		if o.finished == nil {
+			time.Sleep(probeSlotPollInterval)
+			continue
+		}
+		timer := time.NewTimer(probeSlotPollInterval)
+		select {
+		case <-timer.C:
+			timer.Stop()
+		case <-o.finished.Wait():
+			timer.Stop()
+			return false
+		}
+	}
+}
+
+func (o *Observer) notePendingIfProbing(tag string) bool {
+	o.probeMu.Lock()
+	defer o.probeMu.Unlock()
+	if !o.probing {
+		return false
+	}
+	o.pendingErrorTag = tag
+	return true
+}
+
 func (o *Observer) endProbe() {
 	o.probeMu.Lock()
 	o.probing = false
+	pending := o.pendingErrorTag
+	o.pendingErrorTag = ""
 	o.probeMu.Unlock()
+	if pending != "" {
+		go o.probeAfterOutboundError(pending)
+	}
 }
 
 func (o *Observer) tryStartErrorProbe() bool {
