@@ -63,6 +63,18 @@ const deadPrimaryRecheckInterval = 60 * time.Second
 // fullProbeMinGap throttles router-requested primary+fallback sweeps.
 const fullProbeMinGap = 3 * time.Second
 
+// speculativeSweepDelay: if the canary has not answered "open" by then, start
+// probing siblings and whitelist nodes without waiting for its verdict. An
+// open network answers within a few hundred ms, so this rarely costs pings.
+const speculativeSweepDelay = 600 * time.Millisecond
+
+// whitelistStatusMaxAge is the age after which a whitelist node status is
+// refreshed when a whitelist network is detected.
+const whitelistStatusMaxAge = 60 * time.Second
+
+// deadFallbackRecheckInterval throttles re-pinging dead whitelist nodes.
+const deadFallbackRecheckInterval = 30 * time.Second
+
 // recoveryPrimarySample is how many random primaries are probed when leaving
 // fallback is considered; one alive primary is enough.
 const recoveryPrimarySample = 3
@@ -245,9 +257,51 @@ func (o *Observer) forgetStartupObservationIfPrimary() {
 // ClearObservationStatus drops all probe results so outbounds are unprobed
 // again. Used after cold-start primary decide and when leaving fallback mode.
 func (o *Observer) ClearObservationStatus() {
+	// With the canary enabled, whitelist node health is kept: dropping it makes
+	// the balancer send traffic to dead wl nodes on the next fallback entry.
+	// Stale entries are refreshed by age instead (see fallbackTagsToProbe).
+	var keep []string
+	if o.canaryEnabled() {
+		keep = o.fallbackOutboundTags()
+	}
 	o.statusLock.Lock()
 	defer o.statusLock.Unlock()
-	o.status = nil
+	var kept []*observatory.OutboundStatus
+	for _, status := range o.status {
+		if slices.Contains(keep, status.OutboundTag) {
+			kept = append(kept, status)
+		}
+	}
+	o.status = kept
+}
+
+// fallbackTagsToProbe returns whitelist outbounds that have never been probed,
+// or whose last probe is older than maxAge. With deadOnly only dead ones are
+// considered stale (alive nodes are watched by real traffic errors).
+func (o *Observer) fallbackTagsToProbe(maxAge time.Duration, deadOnly bool) []string {
+	tags := o.fallbackOutboundTags()
+	if len(tags) == 0 {
+		return nil
+	}
+	o.statusLock.Lock()
+	defer o.statusLock.Unlock()
+	now := time.Now().Unix()
+	var out []string
+	for _, tag := range tags {
+		loc := o.findStatusLocationLockHolderOnly(tag)
+		if loc == -1 {
+			out = append(out, tag)
+			continue
+		}
+		st := o.status[loc]
+		if deadOnly && st.Alive {
+			continue
+		}
+		if now-st.LastTryTime >= int64(maxAge/time.Second) {
+			out = append(out, tag)
+		}
+	}
+	return out
 }
 
 func (o *Observer) ProbeFallback() {
@@ -357,24 +411,59 @@ func (o *Observer) probeAfterOutboundError(tag string) {
 func (o *Observer) runPrimaryErrorProbeWithCanary(tag string) {
 	stateCh := make(chan NetworkState, 1)
 	go func() { stateCh <- o.CheckNetwork() }()
-	result := o.probe(tag)
-	state := <-stateCh
+	resultCh := make(chan observatory.ProbeResult, 1)
+	go func() { resultCh <- o.probe(tag) }()
+
+	// Siblings and stale/unknown whitelist nodes are swept in parallel with
+	// the canary once the network looks like a whitelist (or the canary is
+	// suspiciously slow), so fallback entry does not wait canary + sweep.
+	var sweepDone chan struct{}
+	startSweep := func() {
+		if sweepDone != nil {
+			return
+		}
+		sweepDone = make(chan struct{})
+		tags := uniqueTags(append(o.primaryOutboundTagsExcept(tag), o.fallbackTagsToProbe(whitelistStatusMaxAge, false)...))
+		go func() {
+			o.probeOutbounds(tags)
+			close(sweepDone)
+		}()
+	}
+	waitSweep := func() {
+		if sweepDone == nil {
+			return
+		}
+		if o.finished == nil {
+			<-sweepDone
+			return
+		}
+		select {
+		case <-sweepDone:
+		case <-o.finished.Wait():
+		}
+	}
+
+	var state NetworkState
+	timer := time.NewTimer(speculativeSweepDelay)
+	select {
+	case state = <-stateCh:
+		timer.Stop()
+		if state == NetworkWhitelist {
+			startSweep()
+		}
+	case <-timer.C:
+		startSweep()
+		state = <-stateCh
+	}
+	result := <-resultCh
 	if !result.Alive && state == NetworkOpen && o.sleepOrFinished(time.Second) {
 		result = o.probe(tag)
 	}
+	waitSweep()
 	if state == NetworkOffline {
 		return
 	}
 	o.updateStatusForResult(tag, &result)
-	if !result.Alive && state == NetworkWhitelist {
-		plan := o.planErrorFollowUp(tag, false)
-		if len(plan.probePrimary) > 0 {
-			o.probeOutbounds(plan.probePrimary)
-		}
-		if len(plan.probeFallback) > 0 {
-			o.probeOutbounds(plan.probeFallback)
-		}
-	}
 	o.syncFallbackMode()
 	o.signalWake()
 }
@@ -540,6 +629,11 @@ func (o *Observer) syncFallbackMode() {
 }
 
 func (o *Observer) shouldSkipErrorFollowUp(tag string) bool {
+	// In fallback mode no user traffic uses primaries; their stray errors must
+	// not trigger sweeps against dead servers.
+	if o.canaryEnabled() && o.inFallbackMode() && !o.isFallbackSubject(tag) {
+		return true
+	}
 	if o.isFallbackSubject(tag) {
 		// Ignore leftover whitelist errors after a primary has recovered.
 		return o.hasConfirmedAlivePrimaryExcept("")
@@ -840,8 +934,11 @@ func (o *Observer) fallbackCanaryTick() time.Duration {
 		}
 		return next
 	}
-	if dead := o.knownDeadFallbackTags(); len(dead) > 0 {
-		o.probeOutbounds(dead)
+	// Unknown whitelist nodes are probed at once; dead ones at most every 30s.
+	unknown := o.fallbackTagsToProbe(time.Duration(1<<62-1), false)
+	dead := o.fallbackTagsToProbe(deadFallbackRecheckInterval, true)
+	if tags := uniqueTags(append(unknown, dead...)); len(tags) > 0 {
+		o.probeOutbounds(tags)
 		o.syncFallbackMode()
 	}
 	return next
