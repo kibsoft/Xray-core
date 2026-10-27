@@ -13,8 +13,21 @@ func (r *Router) EnableFallbackMode() {
 	r.fallbackMode.CompareAndSwap(false, true)
 }
 
+// fallbackEntryGate is implemented by an observatory that can veto entering
+// fallback mode (network canary: only a whitelist network may enter).
+type fallbackEntryGate interface {
+	AllowFallbackEntry() bool
+}
+
+func (r *Router) canEnterFallback() bool {
+	if gate, ok := r.observatory.(fallbackEntryGate); ok {
+		return gate.AllowFallbackEntry()
+	}
+	return true
+}
+
 func (r *Router) TryEnterFallbackMode() {
-	if r.hasConfirmedAliveFallback() {
+	if r.hasConfirmedAliveFallback() && r.canEnterFallback() {
 		r.EnableFallbackMode()
 		return
 	}
@@ -39,7 +52,7 @@ func (r *Router) SyncFallbackMode() {
 		}
 		return
 	}
-	if r.hasConfirmedAliveFallback() {
+	if r.hasConfirmedAliveFallback() && (r.fallbackMode.Load() || r.canEnterFallback()) {
 		r.EnableFallbackMode()
 		return
 	}

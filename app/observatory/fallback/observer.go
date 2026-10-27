@@ -2,6 +2,7 @@ package fallback
 
 import (
 	"context"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -46,7 +47,25 @@ type Observer struct {
 
 	trafficMu sync.Mutex
 	traffic   map[string]*tagTraffic
+
+	// canary holds the latest direct network verdict (open / whitelist / ...).
+	canary canaryCache
+
+	dwellMu       sync.Mutex
+	fallbackSince time.Time
+	lastFullProbe time.Time
 }
+
+// deadPrimaryRecheckInterval is how often known-dead primaries are re-probed
+// in primary mode, only while the canary reports an open network.
+const deadPrimaryRecheckInterval = 60 * time.Second
+
+// fullProbeMinGap throttles router-requested primary+fallback sweeps.
+const fullProbeMinGap = 3 * time.Second
+
+// recoveryPrimarySample is how many random primaries are probed when leaving
+// fallback is considered; one alive primary is enough.
+const recoveryPrimarySample = 3
 
 // defaultStartupProbeDelay waits for the network path (e.g. LTE after VPN up)
 // before the cold-start primary+fallback health check.
@@ -147,11 +166,69 @@ func (o *Observer) startupProbe() {
 	if !o.waitBeginProbe() {
 		return
 	}
-	o.probeOutbounds(o.primaryAndFallbackTags())
+	o.probeOutbounds(o.tagsToProbeForNetwork())
 	o.syncFallbackMode()
 	o.signalWake()
 	o.forgetStartupObservationIfPrimary()
 	o.endProbe()
+}
+
+// tagsToProbeForNetwork picks the outbounds a full check should ping. Without
+// the canary this is primary+fallback. With it, whitelist FALLBACK nodes are
+// pinged only when the network looks like a whitelist, and nothing is pinged
+// while offline (dead marks would be stale once the network returns).
+func (o *Observer) tagsToProbeForNetwork() []string {
+	if !o.canaryEnabled() {
+		return o.primaryAndFallbackTags()
+	}
+	switch o.CheckNetwork() {
+	case NetworkWhitelist:
+		return o.primaryAndFallbackTags()
+	case NetworkOffline:
+		return nil
+	default:
+		return o.primaryOutboundTags()
+	}
+}
+
+func (o *Observer) noteFallbackDwell() {
+	inFallback := o.inFallbackMode()
+	o.dwellMu.Lock()
+	defer o.dwellMu.Unlock()
+	if !inFallback {
+		o.fallbackSince = time.Time{}
+	} else if o.fallbackSince.IsZero() {
+		o.fallbackSince = time.Now()
+	}
+}
+
+// dwellElapsed reports whether fallback mode has lasted long enough to
+// consider leaving it.
+func (o *Observer) dwellElapsed() bool {
+	o.noteFallbackDwell()
+	o.dwellMu.Lock()
+	defer o.dwellMu.Unlock()
+	return !o.fallbackSince.IsZero() && time.Since(o.fallbackSince) >= o.minFallbackDwell()
+}
+
+func (o *Observer) knownDeadPrimaryTags() []string {
+	var dead []string
+	for _, tag := range o.primaryOutboundTags() {
+		if o.isKnownDead(tag) {
+			dead = append(dead, tag)
+		}
+	}
+	return dead
+}
+
+// randomSample returns up to n distinct random elements of tags.
+func randomSample(tags []string, n int) []string {
+	out := append([]string{}, tags...)
+	rand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
+	if len(out) > n {
+		out = out[:n]
+	}
+	return out
 }
 
 // forgetStartupObservationIfPrimary drops probe results after a cold-start
@@ -195,7 +272,16 @@ func (o *Observer) ProbePrimaryAndFallback() {
 		return
 	}
 	defer o.endProbe()
-	o.probeOutbounds(o.primaryAndFallbackTags())
+	o.dwellMu.Lock()
+	tooSoon := time.Since(o.lastFullProbe) < fullProbeMinGap
+	if !tooSoon {
+		o.lastFullProbe = time.Now()
+	}
+	o.dwellMu.Unlock()
+	if tooSoon {
+		return
+	}
+	o.probeOutbounds(o.tagsToProbeForNetwork())
 	o.syncFallbackMode()
 	o.signalWake()
 }
@@ -261,8 +347,44 @@ func (o *Observer) probeAfterOutboundError(tag string) {
 	}
 }
 
+// runPrimaryErrorProbeWithCanary handles an error on a primary node when the
+// network canary is enabled. The canary runs in parallel with the probe:
+//   - open network: the node gets one retry; if still dead it is just marked
+//     dead (sticky fails over), with no sibling sweep and no whitelist pings;
+//   - whitelist signature: siblings and whitelist nodes are probed so fallback
+//     mode can be entered;
+//   - offline: nothing is marked, a dead mark would be stale on return.
+func (o *Observer) runPrimaryErrorProbeWithCanary(tag string) {
+	stateCh := make(chan NetworkState, 1)
+	go func() { stateCh <- o.CheckNetwork() }()
+	result := o.probe(tag)
+	state := <-stateCh
+	if !result.Alive && state == NetworkOpen && o.sleepOrFinished(time.Second) {
+		result = o.probe(tag)
+	}
+	if state == NetworkOffline {
+		return
+	}
+	o.updateStatusForResult(tag, &result)
+	if !result.Alive && state == NetworkWhitelist {
+		plan := o.planErrorFollowUp(tag, false)
+		if len(plan.probePrimary) > 0 {
+			o.probeOutbounds(plan.probePrimary)
+		}
+		if len(plan.probeFallback) > 0 {
+			o.probeOutbounds(plan.probeFallback)
+		}
+	}
+	o.syncFallbackMode()
+	o.signalWake()
+}
+
 func (o *Observer) runErrorProbe(tag string) {
 	defer o.endProbe()
+	if o.canaryEnabled() && !o.isFallbackSubject(tag) {
+		o.runPrimaryErrorProbeWithCanary(tag)
+		return
+	}
 	result := o.probe(tag)
 	o.updateStatusForResult(tag, &result)
 	plan := o.planErrorFollowUp(tag, result.Alive)
@@ -414,6 +536,7 @@ func (o *Observer) syncFallbackMode() {
 	if syncer, ok := o.modeCtrl.(interface{ SyncFallbackMode() }); ok {
 		syncer.SyncFallbackMode()
 	}
+	o.noteFallbackDwell()
 }
 
 func (o *Observer) shouldSkipErrorFollowUp(tag string) bool {
@@ -619,6 +742,13 @@ func (o *Observer) background() {
 		o.clearRemovedOutbounds(known)
 
 		inFallback := o.modeCtrl != nil && o.modeCtrl.IsFallbackMode()
+		if inFallback && o.canaryEnabled() {
+			next := o.fallbackCanaryTick()
+			if !o.waitNext(next) {
+				return
+			}
+			continue
+		}
 		if inFallback {
 			if o.tryBeginProbe() {
 				// Mux recovery plus known-dead whitelist tags only. Alive
@@ -630,6 +760,19 @@ func (o *Observer) background() {
 			}
 			if !o.waitNext(o.recoveryProbeInterval()) {
 				return
+			}
+			continue
+		}
+
+		if o.canaryEnabled() && len(o.knownDeadPrimaryTags()) > 0 {
+			started := time.Now()
+			if !o.waitNext(deadPrimaryRecheckInterval) {
+				return
+			}
+			// A wake-up (error probe finished) must not trigger an immediate
+			// re-ping of nodes that were just marked dead.
+			if time.Since(started) >= deadPrimaryRecheckInterval-time.Second {
+				o.recheckDeadPrimaries()
 			}
 			continue
 		}
@@ -654,6 +797,54 @@ func (o *Observer) background() {
 			return
 		}
 	}
+}
+
+// recheckDeadPrimaries revives primaries marked dead earlier, but only while
+// the network is open, so a whitelist or offline period never produces pings.
+func (o *Observer) recheckDeadPrimaries() {
+	if !o.tryBeginProbe() {
+		return
+	}
+	defer o.endProbe()
+	if o.inFallbackMode() || o.CheckNetwork() != NetworkOpen {
+		return
+	}
+	if dead := o.knownDeadPrimaryTags(); len(dead) > 0 {
+		o.probeOutbounds(dead)
+		o.syncFallbackMode()
+	}
+}
+
+// fallbackCanaryTick is one iteration of the fallback-mode loop when the
+// canary is enabled. Servers are not pinged while the network still looks like
+// a whitelist: only the free direct canary runs. Once foreign targets are
+// reachable again (and the minimum dwell has passed) a few random primaries are
+// probed so the router can leave fallback. It returns the wait before the next
+// tick.
+func (o *Observer) fallbackCanaryTick() time.Duration {
+	next := o.canaryPollInterval()
+	state := o.CheckNetwork()
+	if !o.tryBeginProbe() {
+		return next
+	}
+	defer o.endProbe()
+	if state == NetworkOpen {
+		if !o.dwellElapsed() {
+			return next
+		}
+		o.probeOutbounds(randomSample(o.primaryOutboundTags(), recoveryPrimarySample))
+		o.syncFallbackMode()
+		if o.inFallbackMode() {
+			// Network is open but primaries still look dead: back off.
+			next = o.recoveryProbeInterval()
+		}
+		return next
+	}
+	if dead := o.knownDeadFallbackTags(); len(dead) > 0 {
+		o.probeOutbounds(dead)
+		o.syncFallbackMode()
+	}
+	return next
 }
 
 func (o *Observer) probeOutbounds(outbounds []string) {

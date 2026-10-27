@@ -290,3 +290,41 @@ func newTestFallbackRouter(t *testing.T) *Router {
 	}, nil))
 	return r
 }
+type gatedObservatory struct {
+	mockObservatory
+	allow bool
+}
+
+func (g *gatedObservatory) AllowFallbackEntry() bool { return g.allow }
+
+func TestRouter_FallbackEntryGate(t *testing.T) {
+	status := []*observatory.OutboundStatus{
+		{OutboundTag: "primary-1", Alive: false},
+		{OutboundTag: "primary-2", Alive: false},
+		{OutboundTag: "fallback-1", Alive: true},
+	}
+	r := newTestFallbackRouter(t)
+	obs := &gatedObservatory{mockObservatory: mockObservatory{status: status}}
+	r.observatory = obs
+	r.stickyStrategy.observatory = obs
+
+	// Open network: all primaries look dead but whitelist entry is vetoed.
+	r.SyncFallbackMode()
+	if mode, _ := r.GetRoutingMode(); mode {
+		t.Fatal("fallback must not be entered when the gate vetoes it")
+	}
+
+	// Whitelist signature: entry is allowed.
+	obs.allow = true
+	r.SyncFallbackMode()
+	if mode, _ := r.GetRoutingMode(); !mode {
+		t.Fatal("fallback must be entered when the gate allows it")
+	}
+
+	// Once in fallback a later veto must not drop the mode.
+	obs.allow = false
+	r.SyncFallbackMode()
+	if mode, _ := r.GetRoutingMode(); !mode {
+		t.Fatal("fallback mode must persist while primaries stay dead")
+	}
+}

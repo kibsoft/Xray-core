@@ -59,6 +59,28 @@ Use `fallbackObservatory` instead of `observatory` / `burstObservatory` when fal
 - **Leave fallback (both dead):** status is kept. Clearing would treat unprobed primaries as alive and delay the next fallback entry after sticky fails over.
 - Observatory probes do not count as outbound errors (they do not retrigger probing).
 
+## Network canary (optional)
+
+Add `networkCanary` to `fallbackObservatory` to tell a whitelist (WL) network from an open one **without pinging proxy servers**. Probes are TLS handshakes through the `direct` outbound (IP literals recommended, no DNS dependency).
+
+| Field | Role |
+|-------|------|
+| `outboundTag` | Outbound used for canary probes, default `direct` |
+| `foreign` | Foreign `host:port` targets (default port 443). Any success means the network is **open** |
+| `domestic` | Domestic targets. Used only to tell WL from offline |
+| `timeout` | Per-round timeout, default `2.5s` |
+| `confirmRounds` | A non-open verdict must hold this many rounds, default `2` |
+| `pollInterval` | In fallback mode: canary polling period, default `8s` |
+| `minFallbackDwell` | Minimum time in fallback before leaving is considered, default `20s` |
+
+Verdicts: `open` (foreign reachable), `whitelist` (foreign unreachable, domestic reachable), `offline` (nothing reachable). The canary is enabled only when both `foreign` and `domestic` are non-empty.
+
+- Fallback mode may be **entered only on a `whitelist` verdict** (in addition to: all primaries dead and a fallback node alive).
+- Primary error on an open network: one retry of that node, then it is marked dead and sticky fails over. No sibling sweep, no whitelist pings. Known-dead primaries are re-probed every 60s while the network is open.
+- Primary error on `whitelist`: siblings and whitelist nodes are probed so fallback can start.
+- `offline`: nothing is marked dead or pinged.
+- In fallback mode servers are not pinged while the network is still `whitelist`/`offline`. When `open` returns (and the dwell passed), up to 3 random primaries are probed to leave fallback.
+
 ## Example config
 
 ```json

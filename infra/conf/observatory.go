@@ -31,6 +31,19 @@ type FallbackObservatoryConfig struct {
 	IgnoreErrors            []string          `json:"ignoreErrors"`
 	ErrorProbeCooldown      duration.Duration `json:"errorProbeCooldown"`
 	RecoveryProbeInterval   duration.Duration `json:"recoveryProbeInterval"`
+	NetworkCanary           *NetworkCanaryConfig `json:"networkCanary"`
+}
+
+// NetworkCanaryConfig configures direct probes that distinguish an open
+// network from a whitelist (WL) network without pinging proxy servers.
+type NetworkCanaryConfig struct {
+	OutboundTag      string            `json:"outboundTag"`
+	Foreign          []string          `json:"foreign"`
+	Domestic         []string          `json:"domestic"`
+	Timeout          duration.Duration `json:"timeout"`
+	ConfirmRounds    int32             `json:"confirmRounds"`
+	PollInterval     duration.Duration `json:"pollInterval"`
+	MinFallbackDwell duration.Duration `json:"minFallbackDwell"`
 }
 
 func (o *FallbackObservatoryConfig) Build() (proto.Message, error) {
@@ -42,7 +55,7 @@ func (o *FallbackObservatoryConfig) Build() (proto.Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &fallback.Config{
+	cfg := &fallback.Config{
 		SubjectSelector:         o.SubjectSelector,
 		FallbackSubjectSelector: o.FallbackSubjectSelector,
 		ProbeUrl:                o.ProbeURL,
@@ -52,7 +65,17 @@ func (o *FallbackObservatoryConfig) Build() (proto.Message, error) {
 		ErrorProbeCooldown:      int64(o.ErrorProbeCooldown),
 		DisableProbeOnError:     !probeOnError,
 		IgnoreErrors:            ignoreErrors,
-	}, nil
+	}
+	if c := o.NetworkCanary; c != nil {
+		cfg.CanaryOutboundTag = c.OutboundTag
+		cfg.CanaryForeign = c.Foreign
+		cfg.CanaryDomestic = c.Domestic
+		cfg.CanaryTimeout = int64(c.Timeout)
+		cfg.CanaryConfirmRounds = c.ConfirmRounds
+		cfg.CanaryPollInterval = int64(c.PollInterval)
+		cfg.MinFallbackDwell = int64(c.MinFallbackDwell)
+	}
+	return cfg, nil
 }
 
 type BurstObservatoryConfig struct {

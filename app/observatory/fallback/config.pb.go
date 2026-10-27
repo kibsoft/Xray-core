@@ -32,6 +32,13 @@ type Config struct {
 	ErrorProbeCooldown      int64                  `protobuf:"varint,8,opt,name=error_probe_cooldown,json=errorProbeCooldown,proto3" json:"error_probe_cooldown,omitempty"`
 	DisableProbeOnError     bool                   `protobuf:"varint,9,opt,name=disable_probe_on_error,json=disableProbeOnError,proto3" json:"disable_probe_on_error,omitempty"`
 	IgnoreErrors            []string               `protobuf:"bytes,10,rep,name=ignore_errors,json=ignoreErrors,proto3" json:"ignore_errors,omitempty"`
+	CanaryOutboundTag       string                 `protobuf:"bytes,11,opt,name=canary_outbound_tag,json=canaryOutboundTag,proto3" json:"canary_outbound_tag,omitempty"`
+	CanaryForeign           []string               `protobuf:"bytes,12,rep,name=canary_foreign,json=canaryForeign,proto3" json:"canary_foreign,omitempty"`
+	CanaryDomestic          []string               `protobuf:"bytes,13,rep,name=canary_domestic,json=canaryDomestic,proto3" json:"canary_domestic,omitempty"`
+	CanaryTimeout           int64                  `protobuf:"varint,14,opt,name=canary_timeout,json=canaryTimeout,proto3" json:"canary_timeout,omitempty"`
+	CanaryConfirmRounds     int32                  `protobuf:"varint,15,opt,name=canary_confirm_rounds,json=canaryConfirmRounds,proto3" json:"canary_confirm_rounds,omitempty"`
+	CanaryPollInterval      int64                  `protobuf:"varint,16,opt,name=canary_poll_interval,json=canaryPollInterval,proto3" json:"canary_poll_interval,omitempty"`
+	MinFallbackDwell        int64                  `protobuf:"varint,17,opt,name=min_fallback_dwell,json=minFallbackDwell,proto3" json:"min_fallback_dwell,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -129,10 +136,79 @@ func (x *Config) GetIgnoreErrors() []string {
 	return nil
 }
 
+func (x *Config) GetCanaryOutboundTag() string {
+	if x != nil {
+		return x.CanaryOutboundTag
+	}
+	return ""
+}
+
+func (x *Config) GetCanaryForeign() []string {
+	if x != nil {
+		return x.CanaryForeign
+	}
+	return nil
+}
+
+func (x *Config) GetCanaryDomestic() []string {
+	if x != nil {
+		return x.CanaryDomestic
+	}
+	return nil
+}
+
+func (x *Config) GetCanaryTimeout() int64 {
+	if x != nil {
+		return x.CanaryTimeout
+	}
+	return 0
+}
+
+func (x *Config) GetCanaryConfirmRounds() int32 {
+	if x != nil {
+		return x.CanaryConfirmRounds
+	}
+	return 0
+}
+
+func (x *Config) GetCanaryPollInterval() int64 {
+	if x != nil {
+		return x.CanaryPollInterval
+	}
+	return 0
+}
+
+func (x *Config) GetMinFallbackDwell() int64 {
+	if x != nil {
+		return x.MinFallbackDwell
+	}
+	return 0
+}
+
 var File_app_observatory_fallback_config_proto protoreflect.FileDescriptor
 
 const file_app_observatory_fallback_config_proto_rawDesc = "" +
-	"\n%app/observatory/fallback/config.proto\x12\"xray.core.app.observatory.fallback\"\xa6\x03\n\x06Config\x12)\n\x10subject_selector\x18\x02 \x03(\tR\x0fsubjectSelector\x12:\n\x19fallback_subject_selector\x18\x06 \x03(\tR\x17fallbackSubjectSelector\x12\x1b\n\tprobe_url\x18\x03 \x01(\tR\x08probeUrl\x12%\n\x0eprobe_interval\x18\x04 \x01(\x03R\rprobeInterval\x12-\n\x12enable_concurrency\x18\x05 \x01(\x08R\x11enableConcurrency\x126\n\x17recovery_probe_interval\x18\x07 \x01(\x03R\x15recoveryProbeInterval\x120\n\x14error_probe_cooldown\x18\x08 \x01(\x03R\x12errorProbeCooldown\x123\n\x16disable_probe_on_error\x18\t \x01(\x08R\x13disableProbeOnError\x12#\n\rignore_errors\x18\n \x03(\tR\fignoreErrorsBy\n!com.xray.app.observatory.fallbackP\x01Z2github.com/xtls/xray-core/app/observatory/fallback\xaa\x02\x1dXray.App.Observatory.Fallbackb\x06proto3"
+	"\n" +
+	"%app/observatory/fallback/config.proto\x12\"xray.core.app.observatory.fallback\"\xe1\x05\n" +
+	"\x06Config\x12)\n" +
+	"\x10subject_selector\x18\x02 \x03(\tR\x0fsubjectSelector\x12:\n" +
+	"\x19fallback_subject_selector\x18\x06 \x03(\tR\x17fallbackSubjectSelector\x12\x1b\n" +
+	"\tprobe_url\x18\x03 \x01(\tR\bprobeUrl\x12%\n" +
+	"\x0eprobe_interval\x18\x04 \x01(\x03R\rprobeInterval\x12-\n" +
+	"\x12enable_concurrency\x18\x05 \x01(\bR\x11enableConcurrency\x126\n" +
+	"\x17recovery_probe_interval\x18\a \x01(\x03R\x15recoveryProbeInterval\x120\n" +
+	"\x14error_probe_cooldown\x18\b \x01(\x03R\x12errorProbeCooldown\x123\n" +
+	"\x16disable_probe_on_error\x18\t \x01(\bR\x13disableProbeOnError\x12#\n" +
+	"\rignore_errors\x18\n" +
+	" \x03(\tR\fignoreErrors\x12.\n" +
+	"\x13canary_outbound_tag\x18\v \x01(\tR\x11canaryOutboundTag\x12%\n" +
+	"\x0ecanary_foreign\x18\f \x03(\tR\rcanaryForeign\x12'\n" +
+	"\x0fcanary_domestic\x18\r \x03(\tR\x0ecanaryDomestic\x12%\n" +
+	"\x0ecanary_timeout\x18\x0e \x01(\x03R\rcanaryTimeout\x122\n" +
+	"\x15canary_confirm_rounds\x18\x0f \x01(\x05R\x13canaryConfirmRounds\x120\n" +
+	"\x14canary_poll_interval\x18\x10 \x01(\x03R\x12canaryPollInterval\x12,\n" +
+	"\x12min_fallback_dwell\x18\x11 \x01(\x03R\x10minFallbackDwellBy\n" +
+	"!com.xray.app.observatory.fallbackP\x01Z2github.com/xtls/xray-core/app/observatory/fallback\xaa\x02\x1dXray.App.Observatory.Fallbackb\x06proto3"
 
 var (
 	file_app_observatory_fallback_config_proto_rawDescOnce sync.Once
