@@ -48,7 +48,7 @@ Use `fallbackObservatory` instead of `observatory` / `burstObservatory` when fal
 | `errorProbeCooldown` | Minimum time between error-driven probes. Default `3s` |
 | `enableConcurrency` | Probe several outbounds in parallel when a full check runs |
 
-- **Startup:** once after Xray start, wait ~1s then probe all primary and fallback outbounds. If an error-driven probe already holds the slot (TUN still up after an Xray restart), startup **waits** for that probe to finish and then still runs the full check; it does not skip. If all primary outbounds are dead and at least one fallback outbound is alive, fallback mode is enabled immediately (avoids waiting for dial retries on cold-start LTE). Observation status is cleared only after this startup probe actually ran and routing stays in **primary** mode, so later Wi-Fi→LTE error follow-up can sweep all primaries. If already in **fallback** mode, status is kept. Errors that arrive while a probe is in flight are coalesced into one follow-up after it finishes (`errorProbeCooldown` still applies). They do not start a second probe immediately.
+- **Startup:** once after Xray start, wait ~1s then probe all primary and fallback outbounds. If an error-driven probe already holds the slot (TUN still up after an Xray restart), startup **waits** for that probe to finish and then still runs the full check; it does not skip. If all primary outbounds are dead and at least one fallback outbound is alive, fallback mode is enabled immediately (avoids waiting for dial retries on cold-start LTE). Observation status is cleared only after this startup probe actually ran and routing stays in **primary** mode, so later Wi-Fi→LTE error follow-up can sweep all primaries. If already in **fallback** mode, status is kept. Errors for the node currently being checked are absorbed. Other pending errors are revalidated against completed checks. Cooldown drops duplicate work instead of starting waiting goroutines. Errors from transports/requests older than a completed check or physical-network reset are ignored.
 - Healthy primary: no pings, or one sticky heartbeat at `probeInterval`.
 - Mux outbound error: probe that outbound. If it is dead, always probe remaining primaries (stale Wi-Fi `Alive` must not block a later Wi-Fi→LTE sweep). Probe fallback outbounds when whitelist health is still unknown and routing is not already in fallback.
 - Whitelist / fallback outbound error: probe that fallback node only (and sibling fallbacks if it is dead). Do not wake mux recovery. If a primary is already confirmed alive, ignore leftover fallback errors (XHTTP `INTERNAL_ERROR` after leaving fallback).
@@ -75,11 +75,14 @@ Add `networkCanary` to `fallbackObservatory` to tell a whitelist (WL) network fr
 
 Verdicts: `open` (foreign reachable), `whitelist` (foreign unreachable, domestic reachable), `offline` (nothing reachable). The canary is enabled only when both `foreign` and `domestic` are non-empty.
 
-- Fallback mode may be **entered only on a `whitelist` verdict** (in addition to: all primaries dead and a fallback node alive).
+- With canary enabled, routing mode follows the network verdict independently of primary health. `whitelist` plus a confirmed alive fallback node enables WL; stale primary `Alive` does not prevent entry. `open` forbids WL even if every primary is dead.
 - Primary error on an open network: one retry of that node, then it is marked dead and sticky fails over. No sibling sweep, no whitelist pings. Known-dead primaries are re-probed every 60s while the network is open.
-- Primary error on `whitelist`: siblings and whitelist nodes are probed so fallback can start.
+- Primary error on `whitelist`: only unknown/stale whitelist nodes are probed so fallback can start. There is no speculative sweep while canary is still running.
 - `offline`: nothing is marked dead or pinged.
-- In fallback mode servers are not pinged while the network is still `whitelist`/`offline`. When `open` returns (and the dwell passed), up to 3 random primaries are probed to leave fallback.
+- In fallback mode healthy WL servers are not polled. Unknown/dead WL nodes can be checked while `whitelist`; `offline` runs no server checks. When `open` returns, check the default primary pool once and pin its first confirmed healthy node. Keep these health results until the next physical network change; direct Internet reachability alone does not prove proxy reachability.
+- Startup on `open` probes no servers; startup on `whitelist` probes only WL nodes.
+- Embedders can call `NotifyNetworkChanged()` on the observer (exported through libXray). Notifications are coalesced, cancel old-network checks, invalidate cached canary/health and bypass traffic-error cooldowns. Results from older network generations are discarded. Offline radio bring-up gets two direct-canary retries. Android watches non-VPN physical networks, including unvalidated networks (a real WL network can fail Android's validation).
+- WL routing starts as soon as the first node is confirmed alive; unprobed siblings remain ineligible until their probes succeed. Late errors from known-dead primaries do not re-probe them before the recovery timer.
 
 ## Example config
 
@@ -163,3 +166,9 @@ xray api routingmode
 - Only one `fallbackBalancerTag` and one sticky balancer (first `stickyRandom` balancer) are supported for recovery.
 - `observatory` / `burstObservatory` cannot be used together with fallback routing.
 - Same-request failover after an outbound `Process` failure is not performed; the next connection uses the updated mode.
+
+## Passive stall detection
+
+An observed TCP connection request or outgoing user payload arms a 3s watchdog. Any response from that outbound cancels it. A stalled request checks only its node (with the network canary enabled); a confirmed failure retires that node's mux workers and lets the sticky balancer pick another node. Without new connection requests or outgoing payload there are no periodic watchdog checks. Closing the last request cancels its timer; internal probes never arm it. A healthy confirmation with no real traffic progress backs off further stall checks (15s, 30s, up to 60s); real downlink progress restores fast detection. The check itself retains its 5s timeout. Vision downlink for observed connections uses buffered copy so progress reaches the watchdog; unrelated connections retain kernel splice. Retiring a mux worker also cancels its in-progress handshake. Confirmed node failure and physical-network reset also cancel RAW/Reality requests and interrupt their user streams, allowing immediate application retry rather than waiting for the old handshake. Session completion and progress from an old network cannot clear a new network's watchdog.
+
+Android resets old transports on physical-network changes and on resume after at least 30s with the screen off or after Doze. Resume also renews the VPN network agent after routing is ready, even if the physical network handle is unchanged. This uses OS events, without a recurring server heartbeat.

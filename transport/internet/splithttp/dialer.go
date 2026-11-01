@@ -46,6 +46,22 @@ var (
 	globalDialerAccess sync.Mutex
 )
 
+// ResetConnections retires XHTTP pools after the physical network changes.
+// New streams must not reuse HTTP/2 or QUIC sessions from the previous path.
+func ResetConnections() {
+	globalDialerAccess.Lock()
+	var clients []*XmuxClient
+	for _, manager := range globalDialerMap {
+		clients = append(clients, manager.xmuxClients...)
+	}
+	globalDialerMap = nil
+	globalDialerAccess.Unlock()
+	for _, client := range clients {
+		client.NotUsed.Store(true)
+		common.Close(client.XmuxConn)
+	}
+}
+
 func getHTTPClient(ctx context.Context, dest net.Destination, streamSettings *internet.MemoryStreamConfig) (DialerClient, *XmuxClient) {
 	realityConfig := reality.ConfigFromStreamSettings(streamSettings)
 

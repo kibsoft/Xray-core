@@ -39,8 +39,10 @@ func (o *Observer) NotifyNetworkChanged() {
 	ctx, cancel := context.WithCancel(parent)
 	o.networkCtx, o.networkCancel = ctx, cancel
 	epoch := o.networkEpoch.Add(1)
+	o.recoverPrimaries.Store(true)
 	o.ClearObservationStatus()
 	o.networkMu.Unlock()
+	o.stopTrafficWatchdogs()
 	go o.checkNetworkChange(ctx, epoch)
 }
 
@@ -68,7 +70,7 @@ func (o *Observer) checkNetworkChange(ctx context.Context, epoch uint64) {
 	startProbes(o.primaryOutboundTags())
 	verdict := make(chan NetworkState, 1)
 	go func() { verdict <- o.CheckNetwork() }()
-	timer := time.NewTimer(speculativeSweepDelay)
+	timer := time.NewTimer(1500 * time.Millisecond)
 	defer timer.Stop()
 	var state NetworkState
 	select {
@@ -100,6 +102,9 @@ func (o *Observer) checkNetworkChange(ctx context.Context, epoch uint64) {
 	if epoch != o.networkEpoch.Load() {
 		return
 	}
+	if state == NetworkOpen {
+		o.recoverPrimaryPool()
+	}
 	o.networkReadyEpoch.Store(epoch)
 	o.syncFallbackMode()
 	o.signalWake()
@@ -108,5 +113,16 @@ func (o *Observer) checkNetworkChange(ctx context.Context, epoch uint64) {
 }
 
 func (o *Observer) NetworkChangeReady() bool {
-	return o.networkReadyEpoch.Load() == o.networkEpoch.Load()
+	if o.networkCheckInProgress() {
+		return false
+	}
+	if !o.canaryEnabled() {
+		return true
+	}
+	state := o.NetworkRoutingState()
+	return state == "open" || state == "whitelist"
+}
+
+func (o *Observer) networkCheckInProgress() bool {
+	return o.networkReadyEpoch.Load() != o.networkEpoch.Load()
 }

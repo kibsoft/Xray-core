@@ -64,6 +64,18 @@ type IncrementalWorkerPicker struct {
 	cleanupTask *task.Periodic
 }
 
+// Reset retires sessions bound to an old physical network, keeping the picker
+// and its factory usable for new connections.
+func (p *IncrementalWorkerPicker) Reset() {
+	p.access.Lock()
+	workers := p.workers
+	p.workers = nil
+	p.access.Unlock()
+	for _, worker := range workers {
+		common.Close(worker)
+	}
+}
+
 func (p *IncrementalWorkerPicker) cleanupFunc() error {
 	p.access.Lock()
 	defer p.access.Unlock()
@@ -155,10 +167,11 @@ type ClientWorkerFactory interface {
 }
 
 type DialingWorkerFactory struct {
-	Proxy    proxy.Outbound
-	Dialer   internet.Dialer
-	Strategy ClientStrategy
-	OnError  func(error)
+	Proxy        proxy.Outbound
+	Dialer       internet.Dialer
+	Strategy     ClientStrategy
+	OnError      func(error)
+	OnErrorSince func(error, time.Time)
 }
 
 func (f *DialingWorkerFactory) Create() (*ClientWorker, error) {
@@ -179,6 +192,8 @@ func (f *DialingWorkerFactory) CreateWithContext(ctx context.Context) (*ClientWo
 	}
 
 	skipReport := session.SkipOutboundErrorReportFromContext(ctx)
+	started := time.Now()
+	workerDone := c.done.Wait()
 
 	go func(p proxy.Outbound, d internet.Dialer, c common.Closable) {
 		outbounds := []*session.Outbound{{
@@ -189,13 +204,24 @@ func (f *DialingWorkerFactory) CreateWithContext(ctx context.Context) (*ClientWo
 			wctx = session.ContextWithSkipOutboundErrorReport(wctx)
 		}
 		wctx, cancel := context.WithCancel(wctx)
+		go func() {
+			select {
+			case <-workerDone:
+				cancel()
+			case <-wctx.Done():
+			}
+		}()
 
 		if errP := p.Process(wctx, &transport.Link{Reader: uplinkReader, Writer: downlinkWriter}, d); errP != nil {
 			errC := errors.Cause(errP)
 			if !(goerrors.Is(errC, io.EOF) || goerrors.Is(errC, io.ErrClosedPipe) || goerrors.Is(errC, context.Canceled)) {
 				errors.LogInfoInner(wctx, errP, "failed to handler mux client connection")
-				if f.OnError != nil && !skipReport {
-					f.OnError(errP)
+				if !skipReport {
+					if f.OnErrorSince != nil {
+						f.OnErrorSince(errP, started)
+					} else if f.OnError != nil {
+						f.OnError(errP)
+					}
 				}
 			}
 		}

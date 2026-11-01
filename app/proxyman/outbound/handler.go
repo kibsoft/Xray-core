@@ -6,6 +6,8 @@ import (
 	goerrors "errors"
 	"io"
 	"math/big"
+	"sync"
+	"time"
 
 	"github.com/xtls/xray-core/common/dice"
 
@@ -71,6 +73,8 @@ type Handler struct {
 	uplinkCounter   stats.Counter
 	downlinkCounter stats.Counter
 	instance        *core.Instance
+	requestMu       sync.Mutex
+	requests        map[*activeRequest]struct{}
 }
 
 // NewHandler creates a new Handler based on the given configuration.
@@ -142,7 +146,7 @@ func NewHandler(ctx context.Context, config *core.OutboundHandlerConfig) (outbou
 								MaxConcurrency: uint32(config.Concurrency),
 								MaxConnection:  128,
 							},
-							OnError: h.notifyMuxDialError,
+							OnErrorSince: h.notifyMuxDialErrorSince,
 						},
 					},
 				}
@@ -164,7 +168,7 @@ func NewHandler(ctx context.Context, config *core.OutboundHandlerConfig) (outbou
 								MaxConcurrency: uint32(config.XudpConcurrency),
 								MaxConnection:  128,
 							},
-							OnError: h.notifyMuxDialError,
+							OnErrorSince: h.notifyMuxDialErrorSince,
 						},
 					},
 				}
@@ -184,6 +188,8 @@ func (h *Handler) Tag() string {
 
 // Dispatch implements proxy.Outbound.Dispatch.
 func (h *Handler) Dispatch(ctx context.Context, link *transport.Link) {
+	ctx = context.WithValue(ctx, outboundRequestStart{}, time.Now())
+	link = h.watchTraffic(ctx, link)
 	outbounds := session.OutboundsFromContext(ctx)
 	ob := outbounds[len(outbounds)-1]
 	content := session.ContentFromContext(ctx)
@@ -256,6 +262,8 @@ func (h *Handler) Dispatch(ctx context.Context, link *transport.Link) {
 		}
 	}
 out:
+	ctx, releaseRequest := h.trackRequest(ctx, link)
+	defer releaseRequest()
 	h.notifyOutboundSessionStart(ctx)
 	err := h.proxy.Process(ctx, link, h)
 	var errC error
@@ -313,7 +321,12 @@ func (h *Handler) notifyOutboundSessionStart(ctx context.Context) {
 		return
 	}
 	if reporter := h.outboundErrorObserver(); reporter != nil {
-		reporter.ReportOutboundSessionStart(h.tag)
+		if observer, ok := reporter.(interface{ ReportOutboundSessionStartSince(string, time.Time) }); ok {
+			started, _ := ctx.Value(outboundRequestStart{}).(time.Time)
+			observer.ReportOutboundSessionStartSince(h.tag, started)
+		} else {
+			reporter.ReportOutboundSessionStart(h.tag)
+		}
 	}
 }
 
@@ -322,7 +335,14 @@ func (h *Handler) notifyOutboundSessionEnd(ctx context.Context, err error) {
 		return
 	}
 	if reporter := h.outboundErrorObserver(); reporter != nil {
-		reporter.ReportOutboundSessionEnd(h.tag, err)
+		if observer, ok := reporter.(interface {
+			ReportOutboundSessionEndSince(string, error, time.Time)
+		}); ok {
+			started, _ := ctx.Value(outboundRequestStart{}).(time.Time)
+			observer.ReportOutboundSessionEndSince(h.tag, err, started)
+		} else {
+			reporter.ReportOutboundSessionEnd(h.tag, err)
+		}
 	}
 }
 
@@ -330,7 +350,18 @@ func (h *Handler) notifyOutboundError(ctx context.Context, err error) {
 	if session.SkipOutboundErrorReportFromContext(ctx) {
 		return
 	}
-	h.notifyMuxDialError(err)
+	started, _ := ctx.Value(outboundRequestStart{}).(time.Time)
+	h.notifyMuxDialErrorSince(err, started)
+}
+
+func (h *Handler) notifyMuxDialErrorSince(err error, started time.Time) {
+	if reporter, ok := h.outboundErrorObserver().(interface {
+		ReportOutboundErrorSince(string, error, time.Time)
+	}); ok {
+		reporter.ReportOutboundErrorSince(h.tag, err, started)
+	} else {
+		h.notifyMuxDialError(err)
+	}
 }
 
 func (h *Handler) notifyMuxDialError(err error) {
@@ -445,8 +476,21 @@ func (h *Handler) Start() error {
 	return nil
 }
 
+// ResetNetworkConnections retires mux workers without closing the outbound.
+func (h *Handler) ResetNetworkConnections() {
+	h.resetRequests()
+	for _, manager := range []*mux.ClientManager{h.mux, h.xudp} {
+		if manager != nil {
+			if picker, ok := manager.Picker.(interface{ Reset() }); ok {
+				picker.Reset()
+			}
+		}
+	}
+}
+
 // Close implements common.Closable.
 func (h *Handler) Close() error {
+	h.ResetNetworkConnections()
 	common.Close(h.mux)
 	common.Close(h.proxy)
 	return nil

@@ -321,6 +321,74 @@ type gatedObservatory struct {
 	allow bool
 }
 
+type networkObservatory struct {
+	mockObservatory
+	state string
+}
+
+func (o *networkObservatory) NetworkRoutingState() string { return o.state }
+func (o *networkObservatory) AllowFallbackEntry() bool    { return o.state == "whitelist" }
+
+func TestRouter_NetworkVerdictControlsMode(t *testing.T) {
+	r := newTestFallbackRouter(t)
+	obs := &networkObservatory{state: "whitelist", mockObservatory: mockObservatory{status: []*observatory.OutboundStatus{
+		// Stale primary Alive must not suppress a real whitelist verdict.
+		{OutboundTag: "primary-1", Alive: true},
+		{OutboundTag: "fallback-1", Alive: true},
+	}}}
+	r.observatory = obs
+	r.SyncFallbackMode()
+	if !r.IsFallbackMode() {
+		t.Fatal("confirmed WL must enter fallback even with stale primary health")
+	}
+	obs.state = "offline"
+	r.SyncFallbackMode()
+	if !r.IsFallbackMode() {
+		t.Fatal("offline must preserve the last routing mode")
+	}
+	obs.state = "open"
+	obs.status[0].Alive = false
+	r.SyncFallbackMode()
+	if r.IsFallbackMode() {
+		t.Fatal("open network must leave WL even when a primary is dead")
+	}
+	r.TryEnterFallbackMode()
+	if r.IsFallbackMode() {
+		t.Fatal("dead primaries must not enable WL on an open network")
+	}
+}
+
+func TestDefaultStickyIsChosenByRuleOrder(t *testing.T) {
+	r := newTestFallbackRouter(t)
+	main := r.balancers["main-sticky"]
+	r.balancers["google-only"] = &Balancer{strategy: NewStickyRandomStrategy()}
+	rules := []*RoutingRule{
+		{TargetTag: &RoutingRule_BalancingTag{BalancingTag: "google-only"}},
+		{TargetTag: &RoutingRule_BalancingTag{BalancingTag: "main-sticky"}},
+	}
+	for i := 0; i < 50; i++ {
+		r.wireStickyStrategies(rules)
+		if r.stickyBalancerTag != "main-sticky" || r.stickyStrategy != main.strategy {
+			t.Fatal("recovery must use default route, never Google-only map entry")
+		}
+	}
+}
+
+func TestRecoveryPinsHealthyPrimary(t *testing.T) {
+	r := newTestFallbackRouter(t)
+	obs := &networkObservatory{state: "open", mockObservatory: mockObservatory{status: []*observatory.OutboundStatus{
+		{OutboundTag: "primary-1", Alive: false}, {OutboundTag: "primary-2", Alive: true},
+	}}}
+	r.observatory = obs
+	r.stickyStrategy.observatory = obs
+	r.EnableFallbackMode()
+	r.RecoverPrimary("primary-2")
+	r.SyncFallbackMode()
+	if r.IsFallbackMode() || r.CurrentStickyTag() != "primary-2" || len(obs.status) != 2 {
+		t.Fatal("must retain confirmed health and selected node after recovery")
+	}
+}
+
 func (g *gatedObservatory) AllowFallbackEntry() bool { return g.allow }
 
 func TestRouter_FallbackEntryGate(t *testing.T) {

@@ -16,9 +16,12 @@ const (
 // tagTraffic tracks user sessions on one outbound tag. Observatory probes
 // never increment inflight (they set SkipOutboundErrorReport).
 type tagTraffic struct {
-	inflight    int
-	lastSuccess time.Time
-	noiseTimes  []time.Time
+	inflight                                                    int
+	lastSuccess                                                 time.Time
+	noiseTimes                                                  []time.Time
+	pendingSince, lastDownlink, healthCheckedAt, healthyProbeAt time.Time
+	watchdogBackoff                                             time.Duration
+	watchdog                                                    *time.Timer
 }
 
 func (o *Observer) ensureTrafficLocked(tag string) *tagTraffic {
@@ -34,18 +37,39 @@ func (o *Observer) ensureTrafficLocked(tag string) *tagTraffic {
 }
 
 func (o *Observer) ReportOutboundSessionStart(tag string) {
+	o.ReportOutboundSessionStartSince(tag, time.Time{})
+}
+
+func (o *Observer) ReportOutboundSessionStartSince(tag string, started time.Time) {
 	o.trafficMu.Lock()
 	defer o.trafficMu.Unlock()
+	if !started.IsZero() && started.Before(o.trafficResetAt) {
+		return
+	}
 	t := o.ensureTrafficLocked(tag)
 	t.inflight++
 }
 
 func (o *Observer) ReportOutboundSessionEnd(tag string, err error) {
+	o.ReportOutboundSessionEndSince(tag, err, time.Time{})
+}
+
+func (o *Observer) ReportOutboundSessionEndSince(tag string, err error, started time.Time) {
 	o.trafficMu.Lock()
 	defer o.trafficMu.Unlock()
+	if !started.IsZero() && started.Before(o.trafficResetAt) {
+		return
+	}
 	t := o.ensureTrafficLocked(tag)
 	if t.inflight > 0 {
 		t.inflight--
+	}
+	if t.inflight == 0 {
+		t.pendingSince = time.Time{}
+		if t.watchdog != nil {
+			t.watchdog.Stop()
+			t.watchdog = nil
+		}
 	}
 	if isOutboundSuccess(err) {
 		t.lastSuccess = time.Now()

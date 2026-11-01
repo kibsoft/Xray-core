@@ -2,7 +2,6 @@ package fallback
 
 import (
 	"context"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -49,17 +48,22 @@ type Observer struct {
 	probing         bool
 	lastErrorProbe  time.Time
 	pendingErrorTag string
+	pendingErrorAt  time.Time
+	errorProbeTag   string
 	wake            chan struct{}
 
-	trafficMu sync.Mutex
-	traffic   map[string]*tagTraffic
+	trafficMu      sync.Mutex
+	traffic        map[string]*tagTraffic
+	trafficResetAt time.Time
+	closed         atomic.Bool
 
 	// canary holds the latest direct network verdict (open / whitelist / ...).
 	canary canaryCache
 
-	dwellMu       sync.Mutex
-	fallbackSince time.Time
-	lastFullProbe time.Time
+	dwellMu          sync.Mutex
+	fallbackSince    time.Time
+	lastFullProbe    time.Time
+	recoverPrimaries atomic.Bool
 }
 
 // deadPrimaryRecheckInterval is how often known-dead primaries are re-probed
@@ -69,21 +73,12 @@ const deadPrimaryRecheckInterval = 60 * time.Second
 // fullProbeMinGap throttles router-requested primary+fallback sweeps.
 const fullProbeMinGap = 3 * time.Second
 
-// speculativeSweepDelay: if the canary has not answered "open" by then, start
-// probing siblings and whitelist nodes without waiting for its verdict. An
-// open network answers within a few hundred ms, so this rarely costs pings.
-const speculativeSweepDelay = 600 * time.Millisecond
-
 // whitelistStatusMaxAge is the age after which a whitelist node status is
 // refreshed when a whitelist network is detected.
 const whitelistStatusMaxAge = 60 * time.Second
 
 // deadFallbackRecheckInterval throttles re-pinging dead whitelist nodes.
 const deadFallbackRecheckInterval = 30 * time.Second
-
-// recoveryPrimarySample is how many random primaries are probed when leaving
-// fallback is considered; one alive primary is enough.
-const recoveryPrimarySample = 3
 
 // defaultStartupProbeDelay waits for the network path (e.g. LTE after VPN up)
 // before the cold-start primary+fallback health check.
@@ -166,6 +161,8 @@ func (o *Observer) Start() error {
 }
 
 func (o *Observer) Close() error {
+	o.closed.Store(true)
+	o.stopTrafficWatchdogs()
 	o.networkMu.Lock()
 	if o.networkCancel != nil {
 		o.networkCancel()
@@ -223,11 +220,11 @@ func (o *Observer) tagsToProbeForNetwork() []string {
 	}
 	switch o.CheckNetwork() {
 	case NetworkWhitelist:
-		return o.primaryAndFallbackTags()
+		return o.fallbackOutboundTags()
 	case NetworkOffline:
 		return nil
 	default:
-		return o.primaryOutboundTags()
+		return nil
 	}
 }
 
@@ -259,16 +256,6 @@ func (o *Observer) knownDeadPrimaryTags() []string {
 		}
 	}
 	return dead
-}
-
-// randomSample returns up to n distinct random elements of tags.
-func randomSample(tags []string, n int) []string {
-	out := append([]string{}, tags...)
-	rand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
-	if len(out) > n {
-		out = out[:n]
-	}
-	return out
 }
 
 // forgetStartupObservationIfPrimary drops probe results after a cold-start
@@ -391,6 +378,11 @@ func (o *Observer) ReportOutboundError(tag string, err error) {
 // (dial/timeout/refused) as immediate probes and closed-pipe / canceled as
 // noise gated by per-tag inflight and a short error burst.
 func (o *Observer) shouldStartErrorProbe(tag string, err error) bool {
+	// Old sockets are intentionally retired by the embedder on network change.
+	// Their errors must not enqueue additional health sweeps.
+	if o.networkCheckInProgress() {
+		return false
+	}
 	if !o.probeOnErrorEnabled() {
 		return false
 	}
@@ -413,88 +405,48 @@ func (o *Observer) shouldStartErrorProbe(tag string, err error) bool {
 }
 
 func (o *Observer) probeAfterOutboundError(tag string) {
-	deadline := time.Now().Add(8 * time.Second)
-	for {
-		if o.tryStartErrorProbe() {
-			o.runErrorProbe(tag)
-			return
-		}
-		if o.finished != nil && o.finished.Done() {
-			return
-		}
-		if time.Now().After(deadline) {
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
+	// Errors during cooldown are absorbed, never queued as sleeping goroutines.
+	if o.networkCheckInProgress() || (o.finished != nil && o.finished.Done()) || o.shouldSkipErrorFollowUp(tag) {
+		return
 	}
+	if !o.tryStartErrorProbe() {
+		return
+	}
+	o.probeMu.Lock()
+	o.errorProbeTag = tag
+	o.probeMu.Unlock()
+	o.runErrorProbe(tag)
 }
 
 // runPrimaryErrorProbeWithCanary handles an error on a primary node when the
-// network canary is enabled. The canary runs in parallel with the probe:
+// network canary is enabled. Direct canary runs before any server probe:
 //   - open network: the node gets one retry; if still dead it is just marked
 //     dead (sticky fails over), with no sibling sweep and no whitelist pings;
-//   - whitelist signature: siblings and whitelist nodes are probed so fallback
-//     mode can be entered;
+//   - whitelist signature: only unknown/stale whitelist nodes are probed;
 //   - offline: nothing is marked, a dead mark would be stale on return.
 func (o *Observer) runPrimaryErrorProbeWithCanary(tag string) {
-	stateCh := make(chan NetworkState, 1)
-	go func() { stateCh <- o.CheckNetwork() }()
-	resultCh := make(chan probeResult, 1)
-	go func() { resultCh <- o.probe(tag) }()
-
-	// Siblings and stale/unknown whitelist nodes are swept in parallel with
-	// the canary once the network looks like a whitelist (or the canary is
-	// suspiciously slow), so fallback entry does not wait canary + sweep.
-	var sweepDone chan struct{}
-	startSweep := func() {
-		if sweepDone != nil {
+	generation := o.networkEpoch.Load()
+	switch o.CheckNetwork() {
+	case NetworkOffline:
+		return
+	case NetworkWhitelist:
+		o.probeOutbounds(o.fallbackTagsToProbe(whitelistStatusMaxAge, false))
+	case NetworkOpen:
+		// Confirm only the failed node. Never sweep siblings on a slow canary.
+		result := o.probe(tag)
+		if generation != o.networkEpoch.Load() {
 			return
 		}
-		sweepDone = make(chan struct{})
-		tags := uniqueTags(append(o.primaryOutboundTagsExcept(tag), o.fallbackTagsToProbe(whitelistStatusMaxAge, false)...))
-		go func() {
-			o.probeOutbounds(tags)
-			close(sweepDone)
-		}()
-	}
-	waitSweep := func() {
-		if sweepDone == nil {
-			return
-		}
-		if o.finished == nil {
-			<-sweepDone
-			return
-		}
-		select {
-		case <-sweepDone:
-		case <-o.finished.Wait():
+		o.updateStatusForResult(tag, &result)
+		if !result.Alive {
+			if resetter, ok := o.ohm.GetHandler(tag).(interface{ ResetNetworkConnections() }); ok {
+				resetter.ResetNetworkConnections()
+			}
 		}
 	}
-
-	var state NetworkState
-	timer := time.NewTimer(speculativeSweepDelay)
-	select {
-	case state = <-stateCh:
-		timer.Stop()
-		if state == NetworkWhitelist {
-			startSweep()
-		}
-	case <-timer.C:
-		startSweep()
-		state = <-stateCh
-	}
-	result := <-resultCh
-	if result.epoch != o.networkEpoch.Load() {
+	if generation != o.networkEpoch.Load() {
 		return
 	}
-	if !result.Alive && state == NetworkOpen && o.sleepOrFinished(time.Second) {
-		result = o.probe(tag)
-	}
-	waitSweep()
-	if state == NetworkOffline {
-		return
-	}
-	o.updateStatusForResult(tag, &result)
 	o.syncFallbackMode()
 	o.signalWake()
 }
@@ -503,6 +455,10 @@ func (o *Observer) runErrorProbe(tag string) {
 	defer o.endProbe()
 	if o.canaryEnabled() && !o.isFallbackSubject(tag) {
 		o.runPrimaryErrorProbeWithCanary(tag)
+		return
+	}
+	if o.canaryEnabled() && o.CheckNetwork() != NetworkWhitelist {
+		// A late error from an old WL session must not probe WL on Wi-Fi.
 		return
 	}
 	result := o.probe(tag)
@@ -531,7 +487,15 @@ func (o *Observer) planErrorFollowUp(tag string, alive bool) errorFollowUpPlan {
 	if o.isFallbackSubject(tag) {
 		plan := errorFollowUpPlan{}
 		if !alive {
-			plan.probeFallback = tagsExcept(o.fallbackOutboundTags(), tag)
+			if o.canaryEnabled() {
+				// Healthy WL siblings already provide failover. Do not sweep
+				// them when one WL endpoint fails.
+				if !o.hasConfirmedAliveFallback() {
+					plan.probeFallback = tagsExcept(o.fallbackTagsToProbe(deadFallbackRecheckInterval, true), tag)
+				}
+			} else {
+				plan.probeFallback = tagsExcept(o.fallbackOutboundTags(), tag)
+			}
 		}
 		return plan
 	}
@@ -663,12 +627,20 @@ func (o *Observer) syncFallbackMode() {
 }
 
 func (o *Observer) shouldSkipErrorFollowUp(tag string) bool {
+	if o.canaryEnabled() && !o.isFallbackSubject(tag) && o.isKnownDead(tag) {
+		// Late errors from a retired mux must not re-probe a known-dead node.
+		// The open-network recovery timer already rechecks it every 60s.
+		return true
+	}
 	// In fallback mode no user traffic uses primaries; their stray errors must
 	// not trigger sweeps against dead servers.
 	if o.canaryEnabled() && o.inFallbackMode() && !o.isFallbackSubject(tag) {
 		return true
 	}
 	if o.isFallbackSubject(tag) {
+		if o.canaryEnabled() {
+			return o.NetworkRoutingState() != "whitelist"
+		}
 		// Ignore leftover whitelist errors after a primary has recovered.
 		return o.hasConfirmedAlivePrimaryExcept("")
 	}
@@ -791,7 +763,11 @@ func (o *Observer) notePendingIfProbing(tag string) bool {
 	if !o.probing {
 		return false
 	}
+	if tag == o.errorProbeTag {
+		return true
+	}
 	o.pendingErrorTag = tag
+	o.pendingErrorAt = time.Now()
 	return true
 }
 
@@ -799,9 +775,12 @@ func (o *Observer) endProbe() {
 	o.probeMu.Lock()
 	o.probing = false
 	pending := o.pendingErrorTag
+	pendingAt := o.pendingErrorAt
 	o.pendingErrorTag = ""
+	o.pendingErrorAt = time.Time{}
+	o.errorProbeTag = ""
 	o.probeMu.Unlock()
-	if pending != "" {
+	if pending != "" && !o.healthCoversError(pending, pendingAt) {
 		go o.probeAfterOutboundError(pending)
 	}
 }
@@ -956,11 +935,14 @@ func (o *Observer) fallbackCanaryTick() time.Duration {
 		return next
 	}
 	defer o.endProbe()
+	if state == NetworkOffline || state == NetworkUnknown {
+		return next
+	}
 	if state == NetworkOpen {
 		if !o.dwellElapsed() {
 			return next
 		}
-		o.probeOutbounds(randomSample(o.primaryOutboundTags(), recoveryPrimarySample))
+		o.recoverPrimaryPool()
 		o.syncFallbackMode()
 		if o.inFallbackMode() {
 			// Network is open but primaries still look dead: back off.
@@ -979,11 +961,23 @@ func (o *Observer) fallbackCanaryTick() time.Duration {
 }
 
 func (o *Observer) probeOutbounds(outbounds []string) {
+	generation := o.networkEpoch.Load()
+	if o.canaryEnabled() && o.NetworkRoutingState() == "whitelist" {
+		o.markPendingFallbacks(outbounds)
+	}
 	ch := make(chan struct{}, len(outbounds))
 	for _, v := range outbounds {
 		go func(v string) {
 			result := o.probe(v)
+			if generation != o.networkEpoch.Load() {
+				ch <- struct{}{}
+				return
+			}
 			o.updateStatusForResult(v, &result)
+			if result.Alive && o.canaryEnabled() && o.isFallbackSubject(v) && o.NetworkRoutingState() == "whitelist" {
+				// Do not wait for a dead sibling's timeout before using a live WL node.
+				o.syncFallbackMode()
+			}
 			ch <- struct{}{}
 		}(v)
 	}
@@ -996,6 +990,19 @@ func (o *Observer) probeOutbounds(outbounds []string) {
 		case <-ch:
 		case <-o.finished.Wait():
 			return
+		}
+	}
+}
+
+// Pending WL nodes are not eligible until their first successful probe. This
+// lets the first healthy node carry traffic while slower siblings finish.
+func (o *Observer) markPendingFallbacks(tags []string) {
+	fallback := o.fallbackOutboundTags()
+	o.statusLock.Lock()
+	defer o.statusLock.Unlock()
+	for _, tag := range tags {
+		if slices.Contains(fallback, tag) && o.findStatusLocationLockHolderOnly(tag) == -1 {
+			o.status = append(o.status, &observatory.OutboundStatus{OutboundTag: tag})
 		}
 	}
 }
@@ -1052,6 +1059,7 @@ func (o *Observer) probe(outboundTag string) probeResult {
 		},
 		TLSHandshakeTimeout: time.Second * 5,
 	}
+	defer httpTransport.CloseIdleConnections()
 	httpClient := &http.Client{
 		Transport: &httpTransport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -1081,6 +1089,9 @@ func (o *Observer) probe(outboundTag string) probeResult {
 		return nil
 	})
 	if err != nil {
+		if probeCtx.Err() != nil {
+			return probeResult{ProbeResult: observatory.ProbeResult{Alive: false, LastErrorReason: "probe canceled"}, epoch: epoch}
+		}
 		errorMessage := "the outbound " + outboundTag + " is dead: GET request failed:" + err.Error() + "with outbound handler report underlying connection failed"
 		errors.LogInfoInner(o.ctx, errorCollectorForRequest.UnderlyingError(), errorMessage)
 		return probeResult{ProbeResult: observatory.ProbeResult{Alive: false, LastErrorReason: errorMessage}, epoch: epoch}
@@ -1095,6 +1106,7 @@ func (o *Observer) updateStatusForResult(outboundTag string, result *probeResult
 	if result.epoch != o.networkEpoch.Load() {
 		return
 	}
+	o.noteHealthCheck(outboundTag, result.Alive)
 	var status *observatory.OutboundStatus
 	if location := o.findStatusLocationLockHolderOnly(outboundTag); location != -1 {
 		status = o.status[location]

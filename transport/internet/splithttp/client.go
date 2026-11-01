@@ -179,6 +179,7 @@ func (c *DefaultDialerClient) PostPacket(ctx context.Context, url string, sessio
 
 // HTTP/1.1 and HTTP/2 will close itself, we only handle HTTP/3 here
 func (c *DefaultDialerClient) Close() error {
+	c.client.CloseIdleConnections()
 	transport := c.client.Transport
 	if h3Transport, ok := transport.(*http3.Transport); ok {
 		h3Transport.Close()

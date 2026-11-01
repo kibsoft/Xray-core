@@ -73,7 +73,7 @@ func (r *Router) Init(ctx context.Context, config *Config, d dns.Client, ohm out
 	if err := r.loadFallbackRules(config); err != nil {
 		return err
 	}
-	r.wireStickyStrategies()
+	r.wireStickyStrategies(config.Rule)
 
 	if core.FromContext(ctx) != nil {
 		core.OptionalFeatures(ctx, func(obs extension.Observatory) {

@@ -1,6 +1,7 @@
 package router
 
 import (
+	"sort"
 	"time"
 
 	"github.com/xtls/xray-core/app/observatory"
@@ -11,7 +12,7 @@ import (
 
 func (r *Router) EnableFallbackMode() {
 	if r.fallbackMode.CompareAndSwap(false, true) {
-		errors.LogInfo(r.ctx, "routing mode: fallback")
+		errors.LogInfo(r.ctx, "routing mode: primary -> whitelist")
 	}
 }
 
@@ -50,6 +51,24 @@ func (r *Router) SyncFallbackMode() {
 		!pending.NetworkChangeReady() && r.fallbackMode.Load() &&
 		!r.hasConfirmedAlive(r.primaryCandidates()) {
 		return
+	}
+	if network, ok := r.observatory.(interface{ NetworkRoutingState() string }); ok {
+		switch network.NetworkRoutingState() {
+		case "whitelist":
+			if r.hasConfirmedAliveFallback() {
+				r.EnableFallbackMode()
+			} else if r.fallbackMode.Load() {
+				r.DisableFallbackMode()
+			}
+			return
+		case "open":
+			if r.fallbackMode.Load() {
+				r.DisableFallbackMode()
+			}
+			return
+		case "offline", "unknown":
+			return
+		}
 	}
 	if r.hasAlivePrimary(r.primaryCandidates()) {
 		if r.fallbackMode.Load() {
@@ -141,7 +160,7 @@ func (r *Router) hasConfirmedAlive(candidates []string) bool {
 
 func (r *Router) DisableFallbackMode() {
 	if r.fallbackMode.Swap(false) {
-		errors.LogInfo(r.ctx, "routing mode: primary")
+		errors.LogInfo(r.ctx, "routing mode: whitelist -> primary")
 	}
 	if r.stickyStrategy != nil {
 		r.stickyStrategy.Reset()
@@ -174,6 +193,10 @@ func (r *Router) recoveryWatcher() {
 	for {
 		select {
 		case <-ticker.C:
+			if network, ok := r.observatory.(interface{ NetworkRoutingState() string }); ok && network.NetworkRoutingState() != "" {
+				// Canary observer owns recovery and its dwell timer.
+				continue
+			}
 			if !r.fallbackMode.Load() || r.stickyBalancerTag == "" {
 				continue
 			}
@@ -277,16 +300,50 @@ func (r *Router) closeFallbackWebhooks() {
 	}
 }
 
-func (r *Router) wireStickyStrategies() {
-	for tag, balancer := range r.balancers {
+func (r *Router) wireStickyStrategies(rules []*RoutingRule) {
+	r.stickyBalancerTag, r.stickyStrategy = "", nil
+	for _, balancer := range r.balancers {
 		if strategy, ok := balancer.strategy.(*StickyRandomStrategy); ok {
 			strategy.SetFallbackController(r)
-			if r.stickyBalancerTag == "" {
-				r.stickyBalancerTag = tag
-				r.stickyStrategy = strategy
+		}
+	}
+	// The last sticky rule is the default route, not a random map entry
+	// such as the Google/US or YouTube-specific balancer.
+	for i := len(rules) - 1; i >= 0; i-- {
+		tag := rules[i].GetBalancingTag()
+		if b := r.balancers[tag]; b != nil {
+			if s, ok := b.strategy.(*StickyRandomStrategy); ok {
+				r.stickyBalancerTag, r.stickyStrategy = tag, s
+				return
 			}
 		}
 	}
+	var tags []string
+	for tag := range r.balancers {
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags)
+	for _, tag := range tags {
+		if s, ok := r.balancers[tag].strategy.(*StickyRandomStrategy); ok {
+			r.stickyBalancerTag, r.stickyStrategy = tag, s
+			return
+		}
+	}
+}
+
+func (r *Router) PrimaryRecoveryCandidates() []string { return r.primaryCandidates() }
+
+func (r *Router) RecoverPrimary(tag string) {
+	if r.stickyStrategy == nil || !contains(r.primaryCandidates(), tag) {
+		return
+	}
+	r.stickyStrategy.mu.Lock()
+	r.stickyStrategy.current = tag
+	r.stickyStrategy.mu.Unlock()
+	if r.fallbackMode.Swap(false) {
+		errors.LogInfo(r.ctx, "routing mode: whitelist -> primary")
+	}
+	errors.LogInfo(r.ctx, "primary recovery selected: ", tag)
 }
 
 func (r *Router) validateFallbackConfig(config *Config) error {

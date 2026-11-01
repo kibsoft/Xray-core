@@ -120,6 +120,9 @@ func (o *Observer) CheckNetwork() NetworkState {
 	}
 	prev := o.canary.state
 	o.canary.state = state
+	if state == NetworkWhitelist {
+		o.recoverPrimaries.Store(true)
+	}
 	o.canary.at = time.Now()
 	o.canary.epoch = epoch
 	if prev != state {
@@ -140,9 +143,24 @@ func (o *Observer) AllowFallbackEntry() bool {
 	return state == NetworkWhitelist && epoch == o.networkEpoch.Load() && time.Since(at) < whitelistEntryTTL
 }
 
+// NetworkRoutingState lets the router distinguish network restrictions from
+// server health. Empty means legacy mode (canary disabled).
+func (o *Observer) NetworkRoutingState() string {
+	if !o.canaryEnabled() {
+		return ""
+	}
+	o.canary.mu.Lock()
+	defer o.canary.mu.Unlock()
+	return o.canary.state.String()
+}
+
 // runCanaryRounds returns Open as soon as one foreign target answers. A
 // non-open verdict must hold for every confirmation round.
-func (o *Observer) runCanaryRounds(ctx context.Context) NetworkState {
+func (o *Observer) runCanaryRounds(contexts ...context.Context) NetworkState {
+	ctx, _ := o.networkContext()
+	if len(contexts) > 0 {
+		ctx = contexts[0]
+	}
 	rounds := o.canaryConfirmRounds()
 	domesticSeen := false
 	for i := 0; i < rounds; i++ {
@@ -189,7 +207,11 @@ type canaryResult struct {
 
 // canaryRound dials all targets in parallel; it returns early on the first
 // reachable foreign target.
-func (o *Observer) canaryRound(parent context.Context) (foreignOK, domesticOK bool) {
+func (o *Observer) canaryRound(contexts ...context.Context) (foreignOK, domesticOK bool) {
+	parent, _ := o.networkContext()
+	if len(contexts) > 0 {
+		parent = contexts[0]
+	}
 	ctx, cancel := context.WithTimeout(parent, o.canaryTimeout())
 	var checks sync.WaitGroup
 	defer func() { cancel(); checks.Wait() }()
