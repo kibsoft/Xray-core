@@ -10,7 +10,9 @@ import (
 )
 
 func (r *Router) EnableFallbackMode() {
-	r.fallbackMode.CompareAndSwap(false, true)
+	if r.fallbackMode.CompareAndSwap(false, true) {
+		errors.LogInfo(r.ctx, "routing mode: fallback")
+	}
 }
 
 // fallbackEntryGate is implemented by an observatory that can veto entering
@@ -42,6 +44,13 @@ func (r *Router) CurrentStickyTag() string {
 }
 
 func (r *Router) SyncFallbackMode() {
+	// During a physical-network check, unknown primaries are not proof of
+	// recovery. Keep the working WL route until a new primary is confirmed.
+	if pending, ok := r.observatory.(interface{ NetworkChangeReady() bool }); ok &&
+		!pending.NetworkChangeReady() && r.fallbackMode.Load() &&
+		!r.hasConfirmedAlive(r.primaryCandidates()) {
+		return
+	}
 	if r.hasAlivePrimary(r.primaryCandidates()) {
 		if r.fallbackMode.Load() {
 			// Primary recovered: drop stale Alive so a later network switch
@@ -131,7 +140,9 @@ func (r *Router) hasConfirmedAlive(candidates []string) bool {
 }
 
 func (r *Router) DisableFallbackMode() {
-	r.fallbackMode.Store(false)
+	if r.fallbackMode.Swap(false) {
+		errors.LogInfo(r.ctx, "routing mode: primary")
+	}
 	if r.stickyStrategy != nil {
 		r.stickyStrategy.Reset()
 	}

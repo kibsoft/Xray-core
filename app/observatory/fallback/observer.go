@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xtls/xray-core/app/observatory"
@@ -27,8 +28,13 @@ import (
 )
 
 type Observer struct {
-	config *Config
-	ctx    context.Context
+	networkMu         sync.Mutex
+	networkCtx        context.Context
+	networkCancel     context.CancelFunc
+	networkEpoch      atomic.Uint64
+	networkReadyEpoch atomic.Uint64
+	config            *Config
+	ctx               context.Context
 
 	statusLock sync.Mutex
 	status     []*observatory.OutboundStatus
@@ -131,7 +137,11 @@ func (o *Observer) probeOnErrorEnabled() bool {
 func (o *Observer) GetObservation(ctx context.Context) (proto.Message, error) {
 	o.statusLock.Lock()
 	defer o.statusLock.Unlock()
-	return &observatory.ObservationResult{Status: o.status}, nil
+	statuses := make([]*observatory.OutboundStatus, len(o.status))
+	for i, status := range o.status {
+		statuses[i] = proto.Clone(status).(*observatory.OutboundStatus)
+	}
+	return &observatory.ObservationResult{Status: statuses}, nil
 }
 
 func (o *Observer) Type() interface{} {
@@ -140,6 +150,11 @@ func (o *Observer) Type() interface{} {
 
 func (o *Observer) Start() error {
 	if o.config != nil && len(o.config.SubjectSelector) != 0 {
+		o.networkMu.Lock()
+		if o.networkCtx == nil {
+			o.networkCtx, o.networkCancel = context.WithCancel(o.ctx)
+		}
+		o.networkMu.Unlock()
 		o.finished = done.New()
 		if o.wake == nil {
 			o.wake = make(chan struct{}, 1)
@@ -151,6 +166,11 @@ func (o *Observer) Start() error {
 }
 
 func (o *Observer) Close() error {
+	o.networkMu.Lock()
+	if o.networkCancel != nil {
+		o.networkCancel()
+	}
+	o.networkMu.Unlock()
 	if o.finished != nil {
 		return o.finished.Close()
 	}
@@ -162,6 +182,7 @@ func (o *Observer) Close() error {
 // probe already holds the slot (TUN still up after Xray restart), wait for it
 // instead of skipping. Status is cleared only after this probe actually ran.
 func (o *Observer) startupProbe() {
+	epoch := o.networkEpoch.Load()
 	if o.finished == nil {
 		return
 	}
@@ -175,10 +196,17 @@ func (o *Observer) startupProbe() {
 	if o.finished.Done() {
 		return
 	}
+	if epoch != o.networkEpoch.Load() {
+		return
+	}
 	if !o.waitBeginProbe() {
 		return
 	}
 	o.probeOutbounds(o.tagsToProbeForNetwork())
+	if epoch != o.networkEpoch.Load() {
+		o.endProbe()
+		return
+	}
 	o.syncFallbackMode()
 	o.signalWake()
 	o.forgetStartupObservationIfPrimary()
@@ -411,7 +439,7 @@ func (o *Observer) probeAfterOutboundError(tag string) {
 func (o *Observer) runPrimaryErrorProbeWithCanary(tag string) {
 	stateCh := make(chan NetworkState, 1)
 	go func() { stateCh <- o.CheckNetwork() }()
-	resultCh := make(chan observatory.ProbeResult, 1)
+	resultCh := make(chan probeResult, 1)
 	go func() { resultCh <- o.probe(tag) }()
 
 	// Siblings and stale/unknown whitelist nodes are swept in parallel with
@@ -456,6 +484,9 @@ func (o *Observer) runPrimaryErrorProbeWithCanary(tag string) {
 		state = <-stateCh
 	}
 	result := <-resultCh
+	if result.epoch != o.networkEpoch.Load() {
+		return
+	}
 	if !result.Alive && state == NetworkOpen && o.sleepOrFinished(time.Second) {
 		result = o.probe(tag)
 	}
@@ -475,6 +506,9 @@ func (o *Observer) runErrorProbe(tag string) {
 		return
 	}
 	result := o.probe(tag)
+	if result.epoch != o.networkEpoch.Load() {
+		return
+	}
 	o.updateStatusForResult(tag, &result)
 	plan := o.planErrorFollowUp(tag, result.Alive)
 	if len(plan.probePrimary) > 0 {
@@ -981,7 +1015,14 @@ func (o *Observer) clearRemovedOutbounds(outbounds []string) {
 	o.status = pruned
 }
 
-func (o *Observer) probe(outboundTag string) observatory.ProbeResult {
+type probeResult struct {
+	observatory.ProbeResult
+	epoch uint64
+}
+
+func (o *Observer) probe(outboundTag string) probeResult {
+	probeCtx, epoch := o.networkContext()
+	dialer := tagged.Dialer
 	errorCollectorForRequest := newErrorCollector()
 
 	httpTransport := http.Transport{
@@ -995,9 +1036,9 @@ func (o *Observer) probe(outboundTag string) observatory.ProbeResult {
 				if err != nil {
 					return errors.New("cannot understand address").Base(err)
 				}
-				trackedCtx := session.TrackedConnectionError(o.ctx, errorCollectorForRequest)
+				trackedCtx := session.TrackedConnectionError(ctx, errorCollectorForRequest)
 				trackedCtx = session.ContextWithSkipOutboundErrorReport(trackedCtx)
-				conn, err := tagged.Dialer(trackedCtx, o.dispatcher, dest, outboundTag)
+				conn, err := dialer(trackedCtx, o.dispatcher, dest, outboundTag)
 				if err != nil {
 					return errors.New("cannot dial remote address ", dest).Base(err)
 				}
@@ -1020,13 +1061,13 @@ func (o *Observer) probe(outboundTag string) observatory.ProbeResult {
 		Timeout: time.Second * 5,
 	}
 	var GETTime time.Duration
-	err := task.Run(o.ctx, func() error {
+	err := task.Run(probeCtx, func() error {
 		startTime := time.Now()
 		probeURL := "https://www.google.com/generate_204"
 		if o.config.ProbeUrl != "" {
 			probeURL = o.config.ProbeUrl
 		}
-		req, _ := http.NewRequest(http.MethodGet, probeURL, nil)
+		req, _ := http.NewRequestWithContext(probeCtx, http.MethodGet, probeURL, nil)
 		utils.TryDefaultHeadersWith(req.Header, "nav")
 		response, err := httpClient.Do(req)
 		if err != nil {
@@ -1042,15 +1083,18 @@ func (o *Observer) probe(outboundTag string) observatory.ProbeResult {
 	if err != nil {
 		errorMessage := "the outbound " + outboundTag + " is dead: GET request failed:" + err.Error() + "with outbound handler report underlying connection failed"
 		errors.LogInfoInner(o.ctx, errorCollectorForRequest.UnderlyingError(), errorMessage)
-		return observatory.ProbeResult{Alive: false, LastErrorReason: errorMessage}
+		return probeResult{ProbeResult: observatory.ProbeResult{Alive: false, LastErrorReason: errorMessage}, epoch: epoch}
 	}
 	errors.LogInfo(o.ctx, "the outbound ", outboundTag, " is alive:", GETTime.Seconds())
-	return observatory.ProbeResult{Alive: true, Delay: GETTime.Milliseconds()}
+	return probeResult{ProbeResult: observatory.ProbeResult{Alive: true, Delay: GETTime.Milliseconds()}, epoch: epoch}
 }
 
-func (o *Observer) updateStatusForResult(outboundTag string, result *observatory.ProbeResult) {
+func (o *Observer) updateStatusForResult(outboundTag string, result *probeResult) {
 	o.statusLock.Lock()
 	defer o.statusLock.Unlock()
+	if result.epoch != o.networkEpoch.Load() {
+		return
+	}
 	var status *observatory.OutboundStatus
 	if location := o.findStatusLocationLockHolderOnly(outboundTag); location != -1 {
 		status = o.status[location]

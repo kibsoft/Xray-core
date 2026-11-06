@@ -98,6 +98,7 @@ type canaryCache struct {
 	mu    sync.Mutex // serializes checks so concurrent callers reuse one result
 	state NetworkState
 	at    time.Time
+	epoch uint64
 }
 
 // CheckNetwork runs the direct canary (or returns a very fresh result). It is
@@ -109,13 +110,18 @@ func (o *Observer) CheckNetwork() NetworkState {
 	}
 	o.canary.mu.Lock()
 	defer o.canary.mu.Unlock()
-	if o.canary.state != NetworkUnknown && time.Since(o.canary.at) < canaryReuseWindow {
+	ctx, epoch := o.networkContext()
+	if o.canary.epoch == epoch && o.canary.state != NetworkUnknown && time.Since(o.canary.at) < canaryReuseWindow {
 		return o.canary.state
 	}
-	state := o.runCanaryRounds()
+	state := o.runCanaryRounds(ctx)
+	if ctx.Err() != nil || epoch != o.networkEpoch.Load() {
+		return NetworkUnknown
+	}
 	prev := o.canary.state
 	o.canary.state = state
 	o.canary.at = time.Now()
+	o.canary.epoch = epoch
 	if prev != state {
 		errors.LogInfo(o.ctx, "network canary: ", prev.String(), " -> ", state.String())
 	}
@@ -129,24 +135,30 @@ func (o *Observer) AllowFallbackEntry() bool {
 		return true
 	}
 	o.canary.mu.Lock()
-	state, at := o.canary.state, o.canary.at
+	state, at, epoch := o.canary.state, o.canary.at, o.canary.epoch
 	o.canary.mu.Unlock()
-	return state == NetworkWhitelist && time.Since(at) < whitelistEntryTTL
+	return state == NetworkWhitelist && epoch == o.networkEpoch.Load() && time.Since(at) < whitelistEntryTTL
 }
 
 // runCanaryRounds returns Open as soon as one foreign target answers. A
 // non-open verdict must hold for every confirmation round.
-func (o *Observer) runCanaryRounds() NetworkState {
+func (o *Observer) runCanaryRounds(ctx context.Context) NetworkState {
 	rounds := o.canaryConfirmRounds()
 	domesticSeen := false
 	for i := 0; i < rounds; i++ {
-		foreignOK, domesticOK := o.canaryRound()
+		foreignOK, domesticOK := o.canaryRound(ctx)
 		if foreignOK {
 			return NetworkOpen
 		}
 		domesticSeen = domesticSeen || domesticOK
-		if i < rounds-1 && !o.sleepOrFinished(canaryRoundGap) {
-			break
+		if i < rounds-1 {
+			timer := time.NewTimer(canaryRoundGap)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return NetworkUnknown
+			}
 		}
 	}
 	if domesticSeen {
@@ -177,20 +189,28 @@ type canaryResult struct {
 
 // canaryRound dials all targets in parallel; it returns early on the first
 // reachable foreign target.
-func (o *Observer) canaryRound() (foreignOK, domesticOK bool) {
-	ctx, cancel := context.WithTimeout(o.ctx, o.canaryTimeout())
-	defer cancel()
+func (o *Observer) canaryRound(parent context.Context) (foreignOK, domesticOK bool) {
+	ctx, cancel := context.WithTimeout(parent, o.canaryTimeout())
+	var checks sync.WaitGroup
+	defer func() { cancel(); checks.Wait() }()
 
 	total := len(o.config.CanaryForeign) + len(o.config.CanaryDomestic)
 	results := make(chan canaryResult, total)
 	for _, target := range o.config.CanaryForeign {
-		go func(t string) { results <- canaryResult{foreign: true, ok: o.canaryDial(ctx, t)} }(target)
+		checks.Add(1)
+		go func(t string) { defer checks.Done(); results <- canaryResult{foreign: true, ok: o.canaryDial(ctx, t)} }(target)
 	}
 	for _, target := range o.config.CanaryDomestic {
-		go func(t string) { results <- canaryResult{foreign: false, ok: o.canaryDial(ctx, t)} }(target)
+		checks.Add(1)
+		go func(t string) { defer checks.Done(); results <- canaryResult{foreign: false, ok: o.canaryDial(ctx, t)} }(target)
 	}
 	for i := 0; i < total; i++ {
-		r := <-results
+		var r canaryResult
+		select {
+		case r = <-results:
+		case <-ctx.Done():
+			return false, domesticOK
+		}
 		if !r.ok {
 			continue
 		}

@@ -20,6 +20,31 @@ type fallbackTestOutboundManager struct {
 	outbound.HandlerSelector
 }
 
+type pendingNetworkObservatory struct {
+	mockObservatory
+	ready bool
+}
+
+func (o *pendingNetworkObservatory) NetworkChangeReady() bool { return o.ready }
+
+func TestRouter_NetworkChangeKeepsFallbackUntilPrimaryConfirmed(t *testing.T) {
+	r := newTestFallbackRouter(t)
+	obs := &pendingNetworkObservatory{mockObservatory: mockObservatory{
+		status: []*observatory.OutboundStatus{{OutboundTag: "fallback-1", Alive: true}},
+	}}
+	r.observatory = obs
+	r.EnableFallbackMode()
+	r.SyncFallbackMode()
+	if !r.fallbackMode.Load() {
+		t.Fatal("unknown primary on a new network must not count as recovery")
+	}
+	obs.status = append(obs.status, &observatory.OutboundStatus{OutboundTag: "primary-1", Alive: true})
+	r.SyncFallbackMode()
+	if r.fallbackMode.Load() {
+		t.Fatal("confirmed primary should leave fallback immediately")
+	}
+}
+
 func TestRouter_FallbackModeRules(t *testing.T) {
 	r := newTestFallbackRouter(t)
 	r.EnableFallbackMode()
@@ -290,6 +315,7 @@ func newTestFallbackRouter(t *testing.T) *Router {
 	}, nil))
 	return r
 }
+
 type gatedObservatory struct {
 	mockObservatory
 	allow bool
