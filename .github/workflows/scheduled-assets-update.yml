@@ -11,10 +11,6 @@ on:
   schedule:
     # Update GeoData on every day (22:30 UTC)
     - cron: "30 22 * * *"
-  push:
-    # Prevent triggering update request storm
-    paths:
-      - ".github/workflows/scheduled-assets-update.yml"
   pull_request:
     # Prevent triggering update request storm
     paths:
@@ -22,7 +18,7 @@ on:
 
 jobs:
   geodat:
-    if: github.event.schedule == '30 22 * * *' || github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    if: github.event.schedule == '30 22 * * *' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Restore Geodat Cache
@@ -66,7 +62,7 @@ jobs:
           key: xray-geodat-${{ github.sha }}-${{ github.run_number }}
 
   wintun:
-    if: github.event.schedule == '30 22 * * *' || github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    if: github.event.schedule == '30 22 * * *' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       ASSETVER: 0.14.1
@@ -79,7 +75,7 @@ jobs:
           key: xray-wintun-
 
       - name: Force downloading if run manually or on file update
-        if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+        if: github.event_name == 'workflow_dispatch'
         run: |
           echo "FORCE_UPDATE=true" >> $GITHUB_ENV
 
