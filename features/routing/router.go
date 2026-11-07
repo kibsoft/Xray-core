@@ -17,6 +17,9 @@ type Router interface {
 	AddRule(config *serial.TypedMessage, shouldAppend bool) error
 	RemoveRule(tag string) error
 	ListRule() []Route
+	AddFallbackRule(config *serial.TypedMessage, shouldAppend bool) error
+	RemoveFallbackRule(tag string) error
+	GetRoutingMode() (bool, error)
 }
 
 // Route is the routing result of Router feature.
@@ -69,6 +72,21 @@ func (DefaultRouter) RemoveRule(tag string) error {
 // ListRule implements Router.
 func (DefaultRouter) ListRule() []Route {
 	return nil
+}
+
+// AddFallbackRule implements Router.
+func (DefaultRouter) AddFallbackRule(config *serial.TypedMessage, shouldAppend bool) error {
+	return common.ErrNoClue
+}
+
+// RemoveFallbackRule implements Router.
+func (DefaultRouter) RemoveFallbackRule(tag string) error {
+	return common.ErrNoClue
+}
+
+// GetRoutingMode implements Router.
+func (DefaultRouter) GetRoutingMode() (bool, error) {
+	return false, common.ErrNoClue
 }
 
 // Start implements common.Runnable.

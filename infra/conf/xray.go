@@ -459,22 +459,24 @@ type Config struct {
 	// left for returning error
 	Transport map[string]json.RawMessage `json:"transport"`
 
-	Env              EnvConfig               `json:"env"`
-	LogConfig        *LogConfig              `json:"log"`
-	RouterConfig     *RouterConfig           `json:"routing"`
-	DNSConfig        *DNSConfig              `json:"dns"`
-	InboundConfigs   []InboundDetourConfig   `json:"inbounds"`
-	OutboundConfigs  []OutboundDetourConfig  `json:"outbounds"`
-	Policy           *PolicyConfig           `json:"policy"`
-	API              *APIConfig              `json:"api"`
-	Metrics          *MetricsConfig          `json:"metrics"`
-	Stats            *StatsConfig            `json:"stats"`
-	Reverse          *ReverseConfig          `json:"reverse"`
-	FakeDNS          *FakeDNSConfig          `json:"fakeDns"`
-	Observatory      *ObservatoryConfig      `json:"observatory"`
-	BurstObservatory *BurstObservatoryConfig `json:"burstObservatory"`
-	Version          *VersionConfig          `json:"version"`
-	Geodata          *GeodataConfig          `json:"geodata"`
+	Env                 EnvConfig                  `json:"env"`
+	LogConfig           *LogConfig                 `json:"log"`
+	RouterConfig        *RouterConfig              `json:"routing"`
+	DNSConfig           *DNSConfig                 `json:"dns"`
+	InboundConfigs      []InboundDetourConfig      `json:"inbounds"`
+	OutboundConfigs     []OutboundDetourConfig     `json:"outbounds"`
+	Policy              *PolicyConfig              `json:"policy"`
+	API                 *APIConfig                 `json:"api"`
+	Metrics             *MetricsConfig             `json:"metrics"`
+	Stats               *StatsConfig               `json:"stats"`
+	Reverse             *ReverseConfig             `json:"reverse"`
+	FakeDNS             *FakeDNSConfig             `json:"fakeDns"`
+	Observatory         *ObservatoryConfig         `json:"observatory"`
+	BurstObservatory    *BurstObservatoryConfig    `json:"burstObservatory"`
+	Version             *VersionConfig             `json:"version"`
+	Geodata             *GeodataConfig             `json:"geodata"`
+	SpeedLimit          *SpeedLimitConfig          `json:"speedLimit"`
+	FallbackObservatory *FallbackObservatoryConfig `json:"fallbackObservatory"`
 }
 
 func (c *Config) findInboundTag(tag string) int {
@@ -524,6 +526,9 @@ func (c *Config) Override(o *Config, fn string) {
 	if o.Policy != nil {
 		c.Policy = o.Policy
 	}
+	if o.SpeedLimit != nil {
+		c.SpeedLimit = o.SpeedLimit
+	}
 	if o.API != nil {
 		c.API = o.API
 	}
@@ -547,6 +552,10 @@ func (c *Config) Override(o *Config, fn string) {
 
 	if o.BurstObservatory != nil {
 		c.BurstObservatory = o.BurstObservatory
+	}
+
+	if o.FallbackObservatory != nil {
+		c.FallbackObservatory = o.FallbackObservatory
 	}
 
 	if o.Version != nil {
@@ -605,10 +614,22 @@ func (c *Config) Build() (*core.Config, error) {
 	if err := PostProcessConfigureFile(c); err != nil {
 		return nil, errors.New("failed to post-process configuration file").Base(err)
 	}
+	if err := c.validateObservatoryConfig(); err != nil {
+		return nil, err
+	}
+
+	dispatcherConf := &dispatcher.Config{}
+	if c.SpeedLimit != nil {
+		speedLimit, err := c.SpeedLimit.Build()
+		if err != nil {
+			return nil, errors.New("failed to build speedLimit configuration").Base(err)
+		}
+		dispatcherConf.SpeedLimit = speedLimit
+	}
 
 	config := &core.Config{
 		App: []*serial.TypedMessage{
-			serial.ToTypedMessage(&dispatcher.Config{}),
+			serial.ToTypedMessage(dispatcherConf),
 			serial.ToTypedMessage(&proxyman.OutboundConfig{}),
 		},
 	}
@@ -702,6 +723,14 @@ func (c *Config) Build() (*core.Config, error) {
 		config.App = append(config.App, serial.ToTypedMessage(r))
 	}
 
+	if c.FallbackObservatory != nil {
+		r, err := c.FallbackObservatory.Build()
+		if err != nil {
+			return nil, errors.New("failed to build fallback observatory configuration").Base(err)
+		}
+		config.App = append(config.App, serial.ToTypedMessage(r))
+	}
+
 	if c.Version != nil {
 		r, err := c.Version.Build()
 		if err != nil {
@@ -754,6 +783,36 @@ func (c *Config) Build() (*core.Config, error) {
 	}
 
 	return config, nil
+}
+
+func (c *Config) validateObservatoryConfig() error {
+	observatoryCount := 0
+	if c.Observatory != nil {
+		observatoryCount++
+	}
+	if c.BurstObservatory != nil {
+		observatoryCount++
+	}
+	if c.FallbackObservatory != nil {
+		observatoryCount++
+	}
+	if observatoryCount > 1 {
+		return errors.New("only one of observatory, burstObservatory, fallbackObservatory can be configured")
+	}
+
+	usesFallbackRouting := false
+	if c.RouterConfig != nil {
+		if c.RouterConfig.FallbackBalancerTag != "" || len(c.RouterConfig.FallbackRules) > 0 {
+			usesFallbackRouting = true
+		}
+	}
+	if usesFallbackRouting && c.FallbackObservatory == nil {
+		return errors.New("fallbackObservatory is required when fallback routing is enabled")
+	}
+	if usesFallbackRouting && (c.Observatory != nil || c.BurstObservatory != nil) {
+		return errors.New("use fallbackObservatory instead of observatory when fallback routing is enabled")
+	}
+	return nil
 }
 
 // Convert string to Address.

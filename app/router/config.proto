@@ -94,6 +94,11 @@ message StrategyLeastLoadConfig {
   float tolerance = 6;
 }
 
+message StrategyStickyRandomConfig {
+  // Sticks to a random alive outbound; enables fallback routing when all are dead.
+  // See app/router/FALLBACK_ROUTING.md for configuration example.
+}
+
 message Config {
   enum DomainStrategy {
     // Use domain as is.
@@ -111,4 +116,6 @@ message Config {
   repeated RoutingRule rule = 2;
   repeated BalancingRule balancing_rule = 3;
   string script = 4;
+  repeated RoutingRule fallback_rule = 6;
+  string fallback_balancer_tag = 7;
 }

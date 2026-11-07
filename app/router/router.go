@@ -5,12 +5,15 @@ import (
 	"maps"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/serial"
+	"github.com/xtls/xray-core/common/signal/done"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/dns"
+	"github.com/xtls/xray-core/features/extension"
 	"github.com/xtls/xray-core/features/outbound"
 	"github.com/xtls/xray-core/features/routing"
 	routing_dns "github.com/xtls/xray-core/features/routing/dns"
@@ -20,9 +23,18 @@ import (
 type Router struct {
 	domainStrategy Config_DomainStrategy
 	rules          atomic.Pointer[[]*Rule]
+	fallbackRules  []*Rule
 	script         *scriptEngine
 	balancers      atomic.Pointer[map[string]*Balancer]
 	dns            dns.Client
+
+	fallbackBalancerTag string
+	fallbackMode        atomic.Bool
+	stickyBalancerTag   string
+	stickyStrategy      *StickyRandomStrategy
+	observatory         extension.Observatory
+	recoveryInterval    time.Duration
+	recoveryFinished    *done.Instance
 
 	ctx        context.Context
 	ohm        outbound.Manager
@@ -56,7 +68,26 @@ func (r *Router) Init(ctx context.Context, config *Config, d dns.Client, ohm out
 
 	r.rules.Store(new([]*Rule))
 	r.balancers.Store(&map[string]*Balancer{})
-	return r.ReloadRules(config, false)
+	if err := r.ReloadRules(config, false); err != nil {
+		return err
+	}
+	r.fallbackBalancerTag = config.FallbackBalancerTag
+	if err := r.validateFallbackConfig(config); err != nil {
+		return err
+	}
+	if err := r.loadFallbackRules(config); err != nil {
+		return err
+	}
+	r.wireStickyStrategies(config.Rule)
+	if core.FromContext(ctx) != nil {
+		core.OptionalFeatures(ctx, func(obs extension.Observatory) {
+			r.observatory = obs
+			if fo, ok := obs.(interface{ ProbeIntervalDuration() time.Duration }); ok {
+				r.recoveryInterval = fo.ProbeIntervalDuration()
+			}
+		})
+	}
+	return nil
 }
 
 // PickRoute implements routing.Router.
@@ -66,18 +97,26 @@ func (r *Router) PickRoute(ctx routing.Context) (routing.Route, error) {
 	}
 
 	originalCtx := ctx
-	rule, ctx, err := r.pickRouteInternal(ctx)
-	if err != nil {
-		return nil, err
+	for {
+		rule, ctx, err := r.pickRouteInternal(ctx)
+		if err != nil {
+			return nil, err
+		}
+		tag, err := rule.GetTag()
+		if err != nil {
+			return nil, err
+		}
+		if tag == "" {
+			if r.fallbackMode.Load() {
+				continue
+			}
+			return nil, errors.New("empty outbound tag")
+		}
+		if rule.Webhook != nil {
+			rule.Webhook.Fire(originalCtx, tag)
+		}
+		return &Route{Context: ctx, outboundTag: tag, ruleTag: rule.RuleTag}, nil
 	}
-	tag, err := rule.GetTag()
-	if err != nil {
-		return nil, err
-	}
-	if rule.Webhook != nil {
-		rule.Webhook.Fire(originalCtx, tag)
-	}
-	return &Route{Context: ctx, outboundTag: tag, ruleTag: rule.RuleTag}, nil
 }
 
 // AddRule implements routing.Router.
@@ -185,6 +224,96 @@ func (r *Router) RemoveRule(tag string) error {
 	return nil
 }
 
+// AddFallbackRule implements routing.Router.
+func (r *Router) AddFallbackRule(config *serial.TypedMessage, shouldAppend bool) error {
+	inst, err := config.GetInstance()
+	if err != nil {
+		return err
+	}
+	c, ok := inst.(*Config)
+	if !ok {
+		return errors.New("AddFallbackRule: config type error")
+	}
+	return r.ReloadFallbackRules(c, shouldAppend)
+}
+
+func (r *Router) ReloadFallbackRules(config *Config, shouldAppend bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if !shouldAppend {
+		r.closeFallbackWebhooks()
+		r.fallbackRules = make([]*Rule, 0, len(config.FallbackRule))
+	}
+	if config.FallbackBalancerTag != "" {
+		r.fallbackBalancerTag = config.FallbackBalancerTag
+		if _, ok := (*r.balancers.Load())[config.FallbackBalancerTag]; !ok {
+			return errors.New("fallback balancer ", config.FallbackBalancerTag, " not found")
+		}
+	}
+
+	startIdx := len(r.fallbackRules)
+	closeNewWebhooks := func() {
+		for i := startIdx; i < len(r.fallbackRules); i++ {
+			if r.fallbackRules[i].Webhook != nil {
+				r.fallbackRules[i].Webhook.Close()
+			}
+		}
+		r.fallbackRules = r.fallbackRules[:startIdx]
+	}
+
+	for _, rule := range config.FallbackRule {
+		if r.fallbackRuleExists(rule.GetRuleTag()) {
+			closeNewWebhooks()
+			return errors.New("duplicate fallback ruleTag ", rule.GetRuleTag())
+		}
+		rr, err := r.buildRuleFromRoutingRule(rule)
+		if err != nil {
+			closeNewWebhooks()
+			return err
+		}
+		r.fallbackRules = append(r.fallbackRules, rr)
+	}
+	return nil
+}
+
+func (r *Router) fallbackRuleExists(tag string) bool {
+	if tag == "" {
+		return false
+	}
+	for _, rule := range r.fallbackRules {
+		if rule.RuleTag == tag {
+			return true
+		}
+	}
+	return false
+}
+
+// RemoveFallbackRule implements routing.Router.
+func (r *Router) RemoveFallbackRule(tag string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if tag == "" {
+		return errors.New("empty tag name!")
+	}
+	newRules := []*Rule{}
+	for _, rule := range r.fallbackRules {
+		if rule.RuleTag != tag {
+			newRules = append(newRules, rule)
+		} else if rule.Webhook != nil {
+			rule.Webhook.Close()
+		}
+	}
+	r.fallbackRules = newRules
+	return nil
+}
+
+// GetRoutingMode implements routing.Router.
+func (r *Router) GetRoutingMode() (bool, error) {
+	return r.fallbackMode.Load(), nil
+}
+
 // ListRule implements routing.Router
 func (r *Router) ListRule() []routing.Route {
 	rules := *r.rules.Load()
@@ -199,21 +328,22 @@ func (r *Router) ListRule() []routing.Route {
 }
 
 func (r *Router) pickRouteInternal(ctx routing.Context) (*Rule, routing.Context, error) {
-	// SkipDNSResolve is set from DNS module.
-	// the DOH remote server maybe a domain name,
-	// this prevents cycle resolving dead loop
+	if r.fallbackMode.Load() {
+		return r.pickRouteWithDNS(ctx, r.fallbackRules, r.pickFallbackRule)
+	}
+	return r.pickRouteWithDNS(ctx, *r.rules.Load(), nil)
+}
+
+func (r *Router) pickRouteWithDNS(ctx routing.Context, rules []*Rule, fallback func(routing.Context) (*Rule, routing.Context, error)) (*Rule, routing.Context, error) {
 	skipDNSResolve := ctx.GetSkipDNSResolve()
 
 	if r.domainStrategy == Config_IpOnDemand && !skipDNSResolve {
 		ctx = routing_dns.ContextWithDNSClient(ctx, r.dns)
 	}
 
-	rules := *r.rules.Load()
-
-	for _, rule := range rules {
-		if rule.Apply(ctx) {
-			return rule, ctx, nil
-		}
+	rule, ctx, err := r.applyRules(ctx, rules, fallback)
+	if err == nil || err != common.ErrNoClue {
+		return rule, ctx, err
 	}
 
 	if r.domainStrategy != Config_IpIfNonMatch || len(ctx.GetTargetDomain()) == 0 || skipDNSResolve {
@@ -221,14 +351,18 @@ func (r *Router) pickRouteInternal(ctx routing.Context) (*Rule, routing.Context,
 	}
 
 	ctx = routing_dns.ContextWithDNSClient(ctx, r.dns)
+	return r.applyRules(ctx, rules, fallback)
+}
 
-	// Try applying rules again if we have IPs.
+func (r *Router) applyRules(ctx routing.Context, rules []*Rule, fallback func(routing.Context) (*Rule, routing.Context, error)) (*Rule, routing.Context, error) {
 	for _, rule := range rules {
 		if rule.Apply(ctx) {
 			return rule, ctx, nil
 		}
 	}
-
+	if fallback != nil {
+		return fallback(ctx)
+	}
 	return nil, ctx, common.ErrNoClue
 }
 
@@ -238,6 +372,10 @@ func (r *Router) Start() error {
 		if err := r.script.start(r); err != nil {
 			return errors.New("failed to initialize routing script").Base(err)
 		}
+	}
+	if r.stickyBalancerTag != "" {
+		r.recoveryFinished = done.New()
+		go r.recoveryWatcher()
 	}
 	return nil
 }
@@ -259,6 +397,10 @@ func (r *Router) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	closeWebhooks(*r.rules.Load())
+	if r.recoveryFinished != nil {
+		r.recoveryFinished.Close()
+	}
+	r.closeFallbackWebhooks()
 	return nil
 }
 

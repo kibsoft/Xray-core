@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package xray.core.app.observatory.fallback;
+option csharp_namespace = "Xray.App.Observatory.Fallback";
+option go_package = "github.com/xtls/xray-core/app/observatory/fallback";
+option java_package = "com.xray.app.observatory.fallback";
+option java_multiple_files = true;
+
+message Config {
+  repeated string subject_selector = 2;
+  repeated string fallback_subject_selector = 6;
+  string probe_url = 3;
+  int64 probe_interval = 4;
+  bool enable_concurrency = 5;
+  int64 recovery_probe_interval = 7;
+  int64 error_probe_cooldown = 8;
+  bool disable_probe_on_error = 9;
+  repeated string ignore_errors = 10;
+
+  // Network canary: direct probes that tell an open network from a whitelist
+  // (WL) network without pinging proxy servers. Disabled when canary_foreign
+  // or canary_domestic is empty.
+  string canary_outbound_tag = 11;
+  repeated string canary_foreign = 12;
+  repeated string canary_domestic = 13;
+  int64 canary_timeout = 14;
+  int32 canary_confirm_rounds = 15;
+  int64 canary_poll_interval = 16;
+  int64 min_fallback_dwell = 17;
+}

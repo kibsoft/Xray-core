@@ -57,16 +57,145 @@ func (*SessionConfig) Descriptor() ([]byte, []int) {
 	return file_app_dispatcher_config_proto_rawDescGZIP(), []int{0}
 }
 
+type UserRate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DownKbps      uint32                 `protobuf:"varint,1,opt,name=down_kbps,json=downKbps,proto3" json:"down_kbps,omitempty"`
+	UpKbps        uint32                 `protobuf:"varint,2,opt,name=up_kbps,json=upKbps,proto3" json:"up_kbps,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UserRate) Reset() {
+	*x = UserRate{}
+	mi := &file_app_dispatcher_config_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UserRate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UserRate) ProtoMessage() {}
+
+func (x *UserRate) ProtoReflect() protoreflect.Message {
+	mi := &file_app_dispatcher_config_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UserRate.ProtoReflect.Descriptor instead.
+func (*UserRate) Descriptor() ([]byte, []int) {
+	return file_app_dispatcher_config_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *UserRate) GetDownKbps() uint32 {
+	if x != nil {
+		return x.DownKbps
+	}
+	return 0
+}
+
+func (x *UserRate) GetUpKbps() uint32 {
+	if x != nil {
+		return x.UpKbps
+	}
+	return 0
+}
+
+type SpeedLimit struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Enabled         bool                   `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	DefaultDownKbps uint32                 `protobuf:"varint,2,opt,name=default_down_kbps,json=defaultDownKbps,proto3" json:"default_down_kbps,omitempty"`
+	DefaultUpKbps   uint32                 `protobuf:"varint,3,opt,name=default_up_kbps,json=defaultUpKbps,proto3" json:"default_up_kbps,omitempty"`
+	Unlimited       []string               `protobuf:"bytes,4,rep,name=unlimited,proto3" json:"unlimited,omitempty"`
+	Overrides       map[string]*UserRate   `protobuf:"bytes,5,rep,name=overrides,proto3" json:"overrides,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *SpeedLimit) Reset() {
+	*x = SpeedLimit{}
+	mi := &file_app_dispatcher_config_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SpeedLimit) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SpeedLimit) ProtoMessage() {}
+
+func (x *SpeedLimit) ProtoReflect() protoreflect.Message {
+	mi := &file_app_dispatcher_config_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SpeedLimit.ProtoReflect.Descriptor instead.
+func (*SpeedLimit) Descriptor() ([]byte, []int) {
+	return file_app_dispatcher_config_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *SpeedLimit) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *SpeedLimit) GetDefaultDownKbps() uint32 {
+	if x != nil {
+		return x.DefaultDownKbps
+	}
+	return 0
+}
+
+func (x *SpeedLimit) GetDefaultUpKbps() uint32 {
+	if x != nil {
+		return x.DefaultUpKbps
+	}
+	return 0
+}
+
+func (x *SpeedLimit) GetUnlimited() []string {
+	if x != nil {
+		return x.Unlimited
+	}
+	return nil
+}
+
+func (x *SpeedLimit) GetOverrides() map[string]*UserRate {
+	if x != nil {
+		return x.Overrides
+	}
+	return nil
+}
+
 type Config struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Settings      *SessionConfig         `protobuf:"bytes,1,opt,name=settings,proto3" json:"settings,omitempty"`
+	SpeedLimit    *SpeedLimit            `protobuf:"bytes,2,opt,name=speed_limit,json=speedLimit,proto3" json:"speed_limit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Config) Reset() {
 	*x = Config{}
-	mi := &file_app_dispatcher_config_proto_msgTypes[1]
+	mi := &file_app_dispatcher_config_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -78,7 +207,7 @@ func (x *Config) String() string {
 func (*Config) ProtoMessage() {}
 
 func (x *Config) ProtoReflect() protoreflect.Message {
-	mi := &file_app_dispatcher_config_proto_msgTypes[1]
+	mi := &file_app_dispatcher_config_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -91,7 +220,7 @@ func (x *Config) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Config.ProtoReflect.Descriptor instead.
 func (*Config) Descriptor() ([]byte, []int) {
-	return file_app_dispatcher_config_proto_rawDescGZIP(), []int{1}
+	return file_app_dispatcher_config_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Config) GetSettings() *SessionConfig {
@@ -101,14 +230,36 @@ func (x *Config) GetSettings() *SessionConfig {
 	return nil
 }
 
+func (x *Config) GetSpeedLimit() *SpeedLimit {
+	if x != nil {
+		return x.SpeedLimit
+	}
+	return nil
+}
+
 var File_app_dispatcher_config_proto protoreflect.FileDescriptor
 
 const file_app_dispatcher_config_proto_rawDesc = "" +
 	"\n" +
 	"\x1bapp/dispatcher/config.proto\x12\x13xray.app.dispatcher\"\x15\n" +
-	"\rSessionConfigJ\x04\b\x01\x10\x02\"H\n" +
+	"\rSessionConfigJ\x04\b\x01\x10\x02\"@\n" +
+	"\bUserRate\x12\x1b\n" +
+	"\tdown_kbps\x18\x01 \x01(\rR\bdownKbps\x12\x17\n" +
+	"\aup_kbps\x18\x02 \x01(\rR\x06upKbps\"\xc3\x02\n" +
+	"\n" +
+	"SpeedLimit\x12\x18\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\x12*\n" +
+	"\x11default_down_kbps\x18\x02 \x01(\rR\x0fdefaultDownKbps\x12&\n" +
+	"\x0fdefault_up_kbps\x18\x03 \x01(\rR\rdefaultUpKbps\x12\x1c\n" +
+	"\tunlimited\x18\x04 \x03(\tR\tunlimited\x12L\n" +
+	"\toverrides\x18\x05 \x03(\v2..xray.app.dispatcher.SpeedLimit.OverridesEntryR\toverrides\x1a[\n" +
+	"\x0eOverridesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x123\n" +
+	"\x05value\x18\x02 \x01(\v2\x1d.xray.app.dispatcher.UserRateR\x05value:\x028\x01\"\x8a\x01\n" +
 	"\x06Config\x12>\n" +
-	"\bsettings\x18\x01 \x01(\v2\".xray.app.dispatcher.SessionConfigR\bsettingsB[\n" +
+	"\bsettings\x18\x01 \x01(\v2\".xray.app.dispatcher.SessionConfigR\bsettings\x12@\n" +
+	"\vspeed_limit\x18\x02 \x01(\v2\x1f.xray.app.dispatcher.SpeedLimitR\n" +
+	"speedLimitB[\n" +
 	"\x17com.xray.app.dispatcherP\x01Z(github.com/xtls/xray-core/app/dispatcher\xaa\x02\x13Xray.App.Dispatcherb\x06proto3"
 
 var (
@@ -123,18 +274,24 @@ func file_app_dispatcher_config_proto_rawDescGZIP() []byte {
 	return file_app_dispatcher_config_proto_rawDescData
 }
 
-var file_app_dispatcher_config_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_app_dispatcher_config_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_app_dispatcher_config_proto_goTypes = []any{
 	(*SessionConfig)(nil), // 0: xray.app.dispatcher.SessionConfig
-	(*Config)(nil),        // 1: xray.app.dispatcher.Config
+	(*UserRate)(nil),      // 1: xray.app.dispatcher.UserRate
+	(*SpeedLimit)(nil),    // 2: xray.app.dispatcher.SpeedLimit
+	(*Config)(nil),        // 3: xray.app.dispatcher.Config
+	nil,                   // 4: xray.app.dispatcher.SpeedLimit.OverridesEntry
 }
 var file_app_dispatcher_config_proto_depIdxs = []int32{
-	0, // 0: xray.app.dispatcher.Config.settings:type_name -> xray.app.dispatcher.SessionConfig
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	4, // 0: xray.app.dispatcher.SpeedLimit.overrides:type_name -> xray.app.dispatcher.SpeedLimit.OverridesEntry
+	0, // 1: xray.app.dispatcher.Config.settings:type_name -> xray.app.dispatcher.SessionConfig
+	2, // 2: xray.app.dispatcher.Config.speed_limit:type_name -> xray.app.dispatcher.SpeedLimit
+	1, // 3: xray.app.dispatcher.SpeedLimit.OverridesEntry.value:type_name -> xray.app.dispatcher.UserRate
+	4, // [4:4] is the sub-list for method output_type
+	4, // [4:4] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_app_dispatcher_config_proto_init() }
@@ -148,7 +305,7 @@ func file_app_dispatcher_config_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_app_dispatcher_config_proto_rawDesc), len(file_app_dispatcher_config_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

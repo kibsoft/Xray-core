@@ -27,7 +27,8 @@ const (
 	mitmAlpn11Key             ctx.SessionKey = 11 // used by TLS dialer
 	mitmServerNameKey         ctx.SessionKey = 12 // used by TLS dialer
 
-	streamSettingsKey ctx.SessionKey = 13
+	streamSettingsKey          ctx.SessionKey = 13
+	skipOutboundErrorReportKey ctx.SessionKey = 14
 )
 
 func ContextWithInbound(ctx context.Context, inbound *Inbound) context.Context {
@@ -127,6 +128,15 @@ func SubmitOutboundErrorToOriginator(ctx context.Context, err error) {
 
 func TrackedConnectionError(ctx context.Context, tracker TrackedRequestErrorFeedback) context.Context {
 	return context.WithValue(ctx, trackedConnectionErrorKey, tracker)
+}
+
+func ContextWithSkipOutboundErrorReport(ctx context.Context) context.Context {
+	return context.WithValue(ctx, skipOutboundErrorReportKey, true)
+}
+
+func SkipOutboundErrorReportFromContext(ctx context.Context) bool {
+	v, ok := ctx.Value(skipOutboundErrorReportKey).(bool)
+	return ok && v
 }
 
 func ContextWithDispatcher(ctx context.Context, dispatcher routing.Dispatcher) context.Context {

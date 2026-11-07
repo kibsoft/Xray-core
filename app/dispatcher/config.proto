@@ -10,6 +10,20 @@ message SessionConfig {
   reserved 1;
 }
 
+message UserRate {
+  uint32 down_kbps = 1;
+  uint32 up_kbps = 2;
+}
+
+message SpeedLimit {
+  bool enabled = 1;
+  uint32 default_down_kbps = 2;
+  uint32 default_up_kbps = 3;
+  repeated string unlimited = 4;
+  map<string, UserRate> overrides = 5;
+}
+
 message Config {
   SessionConfig settings = 1;
+  SpeedLimit speed_limit = 2;
 }

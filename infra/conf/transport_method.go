@@ -264,6 +264,11 @@ func (c *TCPConfig) Build() (proto.Message, error) {
 }
 
 type SplitHTTPConfig struct {
+	Paths           []string `json:"paths"`
+	PathRotateEvery int32    `json:"pathRotateEvery"`
+	PathSeqJitter   int32    `json:"pathSeqJitter"`
+	DecoyPaths      []string `json:"decoyPaths"`
+
 	Host                 string            `json:"host"`
 	Path                 string            `json:"path"`
 	Mode                 string            `json:"mode"`
@@ -468,9 +473,37 @@ func (c *SplitHTTPConfig) Build() (proto.Message, error) {
 		c.Xmux.HMaxReusableSecs.To = 3000
 	}
 
+	if c.PathRotateEvery < 0 {
+		return nil, errors.New("pathRotateEvery cannot be negative")
+	}
+	if c.PathSeqJitter < 0 {
+		return nil, errors.New("pathSeqJitter cannot be negative")
+	}
+
+	path := c.Path
+	if len(c.Paths) > 0 || c.PathRotateEvery > 1 || c.PathSeqJitter > 0 {
+		patterns := c.Paths
+		if len(patterns) == 0 {
+			patterns = []string{c.Path}
+		}
+		path = splithttp.EncodePathSpec(patterns, c.PathRotateEvery, c.PathSeqJitter)
+	}
+	if len(c.DecoyPaths) > 0 {
+		cleaned := make([]string, 0, len(c.DecoyPaths))
+		for _, p := range c.DecoyPaths {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				cleaned = append(cleaned, p)
+			}
+		}
+		if len(cleaned) > 0 {
+			path += "||d=" + strings.Join(cleaned, ",")
+		}
+	}
+
 	config := &splithttp.Config{
 		Host:                 c.Host,
-		Path:                 c.Path,
+		Path:                 path,
 		Mode:                 c.Mode,
 		Headers:              c.Headers,
 		XPaddingBytes:        newRangeConfig(c.XPaddingBytes),

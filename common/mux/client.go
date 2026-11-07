@@ -29,7 +29,7 @@ type ClientManager struct {
 
 func (m *ClientManager) Dispatch(ctx context.Context, link *transport.Link) error {
 	for i := 0; i < 16; i++ {
-		worker, err := m.Picker.PickAvailable()
+		worker, err := pickWorker(m.Picker, ctx)
 		if err != nil {
 			return err
 		}
@@ -45,12 +45,35 @@ type WorkerPicker interface {
 	PickAvailable() (*ClientWorker, error)
 }
 
+type contextualWorkerPicker interface {
+	PickAvailableContext(ctx context.Context) (*ClientWorker, error)
+}
+
+func pickWorker(p WorkerPicker, ctx context.Context) (*ClientWorker, error) {
+	if cp, ok := p.(contextualWorkerPicker); ok {
+		return cp.PickAvailableContext(ctx)
+	}
+	return p.PickAvailable()
+}
+
 type IncrementalWorkerPicker struct {
 	Factory ClientWorkerFactory
 
 	access      sync.Mutex
 	workers     []*ClientWorker
 	cleanupTask *task.Periodic
+}
+
+// Reset retires sessions bound to an old physical network, keeping the picker
+// and its factory usable for new connections.
+func (p *IncrementalWorkerPicker) Reset() {
+	p.access.Lock()
+	workers := p.workers
+	p.workers = nil
+	p.access.Unlock()
+	for _, worker := range workers {
+		common.Close(worker)
+	}
 }
 
 func (p *IncrementalWorkerPicker) cleanupFunc() error {
@@ -85,7 +108,7 @@ func (p *IncrementalWorkerPicker) findAvailable() int {
 	return -1
 }
 
-func (p *IncrementalWorkerPicker) pickInternal() (*ClientWorker, bool, error) {
+func (p *IncrementalWorkerPicker) pickInternal(ctx context.Context) (*ClientWorker, bool, error) {
 	p.access.Lock()
 	defer p.access.Unlock()
 
@@ -100,7 +123,7 @@ func (p *IncrementalWorkerPicker) pickInternal() (*ClientWorker, bool, error) {
 
 	p.cleanup()
 
-	worker, err := p.Factory.Create()
+	worker, err := p.createWorker(ctx)
 	if err != nil {
 		return nil, false, err
 	}
@@ -116,8 +139,22 @@ func (p *IncrementalWorkerPicker) pickInternal() (*ClientWorker, bool, error) {
 	return worker, true, nil
 }
 
+func (p *IncrementalWorkerPicker) createWorker(ctx context.Context) (*ClientWorker, error) {
+	type contextualFactory interface {
+		CreateWithContext(context.Context) (*ClientWorker, error)
+	}
+	if cf, ok := p.Factory.(contextualFactory); ok {
+		return cf.CreateWithContext(ctx)
+	}
+	return p.Factory.Create()
+}
+
 func (p *IncrementalWorkerPicker) PickAvailable() (*ClientWorker, error) {
-	worker, start, err := p.pickInternal()
+	return p.PickAvailableContext(context.Background())
+}
+
+func (p *IncrementalWorkerPicker) PickAvailableContext(ctx context.Context) (*ClientWorker, error) {
+	worker, start, err := p.pickInternal(ctx)
 	if start {
 		common.Must(p.cleanupTask.Start())
 	}
@@ -130,12 +167,18 @@ type ClientWorkerFactory interface {
 }
 
 type DialingWorkerFactory struct {
-	Proxy    proxy.Outbound
-	Dialer   internet.Dialer
-	Strategy ClientStrategy
+	Proxy        proxy.Outbound
+	Dialer       internet.Dialer
+	Strategy     ClientStrategy
+	OnError      func(error)
+	OnErrorSince func(error, time.Time)
 }
 
 func (f *DialingWorkerFactory) Create() (*ClientWorker, error) {
+	return f.CreateWithContext(context.Background())
+}
+
+func (f *DialingWorkerFactory) CreateWithContext(ctx context.Context) (*ClientWorker, error) {
 	opts := []pipe.Option{pipe.WithSizeLimit(64 * 1024)}
 	uplinkReader, upLinkWriter := pipe.New(opts...)
 	downlinkReader, downlinkWriter := pipe.New(opts...)
@@ -148,17 +191,38 @@ func (f *DialingWorkerFactory) Create() (*ClientWorker, error) {
 		return nil, err
 	}
 
+	skipReport := session.SkipOutboundErrorReportFromContext(ctx)
+	started := time.Now()
+	workerDone := c.done.Wait()
+
 	go func(p proxy.Outbound, d internet.Dialer, c common.Closable) {
 		outbounds := []*session.Outbound{{
 			Target: net.TCPDestination(muxCoolAddress, muxCoolPort),
 		}}
-		ctx := session.ContextWithOutbounds(context.Background(), outbounds)
-		ctx, cancel := context.WithCancel(ctx)
+		wctx := session.ContextWithOutbounds(context.Background(), outbounds)
+		if skipReport {
+			wctx = session.ContextWithSkipOutboundErrorReport(wctx)
+		}
+		wctx, cancel := context.WithCancel(wctx)
+		go func() {
+			select {
+			case <-workerDone:
+				cancel()
+			case <-wctx.Done():
+			}
+		}()
 
-		if errP := p.Process(ctx, &transport.Link{Reader: uplinkReader, Writer: downlinkWriter}, d); errP != nil {
+		if errP := p.Process(wctx, &transport.Link{Reader: uplinkReader, Writer: downlinkWriter}, d); errP != nil {
 			errC := errors.Cause(errP)
 			if !(goerrors.Is(errC, io.EOF) || goerrors.Is(errC, io.ErrClosedPipe) || goerrors.Is(errC, context.Canceled)) {
-				errors.LogInfoInner(ctx, errP, "failed to handler mux client connection")
+				errors.LogInfoInner(wctx, errP, "failed to handler mux client connection")
+				if !skipReport {
+					if f.OnErrorSince != nil {
+						f.OnErrorSince(errP, started)
+					} else if f.OnError != nil {
+						f.OnError(errP)
+					}
+				}
 			}
 		}
 		common.Must(c.Close())

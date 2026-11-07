@@ -54,6 +54,14 @@ func (a *MemoryAccount) Equals(account protocol.Account) bool {
 	return a.ID.Equals(vlessAccount.ID)
 }
 
+// UserID implements protocol.UserIDer.
+func (a *MemoryAccount) UserID() string {
+	if a == nil || a.ID == nil {
+		return ""
+	}
+	return a.ID.String()
+}
+
 func (a *MemoryAccount) ToProto() proto.Message {
 	return &Account{
 		Id:         a.ID.String(),

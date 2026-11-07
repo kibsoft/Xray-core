@@ -154,6 +154,13 @@ func (br *BalancingRule) Build(ohm outbound.Manager, dispatcher routing.Dispatch
 			fallbackTag: br.FallbackTag,
 			strategy:    leastLoadStrategy,
 		}, nil
+	case "stickyrandom":
+		return &Balancer{
+			selectors:   br.OutboundSelector,
+			ohm:         ohm,
+			fallbackTag: br.FallbackTag,
+			strategy:    NewStickyRandomStrategy(),
+		}, nil
 	case "random":
 		fallthrough
 	case "":

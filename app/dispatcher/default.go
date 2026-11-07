@@ -98,6 +98,7 @@ type DefaultDispatcher struct {
 	policy policy.Manager
 	stats  stats.Manager
 	fdns   dns.FakeDNSEngine
+	speed  *SpeedLimiter
 }
 
 func init() {
@@ -121,6 +122,7 @@ func (d *DefaultDispatcher) Init(config *Config, om outbound.Manager, router rou
 	d.router = router
 	d.policy = pm
 	d.stats = sm
+	d.speed = NewSpeedLimiter(config.GetSpeedLimit())
 	return nil
 }
 
@@ -184,10 +186,14 @@ func (d *DefaultDispatcher) getLink(ctx context.Context) (*transport.Link, *tran
 		}
 	}
 
+	down, up := d.speed.Bind(ctx, user)
+	inboundLink.Writer = wrapWriter(inboundLink.Writer, up)
+	outboundLink.Writer = wrapWriter(outboundLink.Writer, down)
+
 	return inboundLink, outboundLink
 }
 
-func WrapLink(ctx context.Context, policyManager policy.Manager, statsManager stats.Manager, link *transport.Link) *transport.Link {
+func WrapLink(ctx context.Context, policyManager policy.Manager, statsManager stats.Manager, speed *SpeedLimiter, link *transport.Link) *transport.Link {
 	sessionInbound := session.InboundFromContext(ctx)
 	var user *protocol.MemoryUser
 	if sessionInbound != nil {
@@ -217,6 +223,10 @@ func WrapLink(ctx context.Context, policyManager policy.Manager, statsManager st
 			trackOnlineIP(ctx, statsManager, user.Email, sessionInbound.Source.Address.String())
 		}
 	}
+
+	down, up := speed.Bind(ctx, user)
+	link.Reader = wrapReader(link.Reader, up)
+	link.Writer = wrapWriter(link.Writer, down)
 
 	return link
 }
@@ -338,7 +348,7 @@ func (d *DefaultDispatcher) DispatchLink(ctx context.Context, destination net.De
 		content = new(session.Content)
 		ctx = session.ContextWithContent(ctx, content)
 	}
-	outbound = WrapLink(ctx, d.policy, d.stats, outbound)
+	outbound = WrapLink(ctx, d.policy, d.stats, d.speed, outbound)
 	sniffingRequest := content.SniffingRequest
 	if !sniffingRequest.Enabled {
 		d.routedDispatch(ctx, outbound, destination)

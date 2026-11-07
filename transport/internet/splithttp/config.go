@@ -17,22 +17,183 @@ import (
 	"github.com/xtls/xray-core/transport/internet"
 )
 
-func (c *Config) GetNormalizedPath() string {
-	pathAndQuery := strings.SplitN(c.Path, "?", 2)
-	path := pathAndQuery[0]
+func pathLastSegmentLooksLikeFile(path string) bool {
+	segment := path
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		segment = path[i+1:]
+	}
+	return strings.Contains(segment, ".")
+}
 
+type pathSpec struct {
+	patterns []string
+	rotate   int32
+	jitter   int32
+	decoy    []string
+}
+
+// EncodePathSpec packs named paths and rotation into Config.Path.
+// A single static path with rotate<=1 and jitter<=0 is stored unchanged.
+func EncodePathSpec(patterns []string, rotate int32, jitter int32) string {
+	cleaned := make([]string, 0, len(patterns))
+	for _, p := range patterns {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			cleaned = append(cleaned, p)
+		}
+	}
+	if len(cleaned) == 0 {
+		return "/"
+	}
+	if rotate < 1 {
+		rotate = 1
+	}
+	if len(cleaned) == 1 && rotate <= 1 && jitter <= 0 {
+		return cleaned[0]
+	}
+	body := strings.Join(cleaned, "|")
+	if jitter > 0 {
+		return fmt.Sprintf("%s||r=%d||j=%d", body, rotate, jitter)
+	}
+	if rotate > 1 {
+		return fmt.Sprintf("%s||r=%d", body, rotate)
+	}
+	return body
+}
+
+func parsePathSpec(raw string) pathSpec {
+	spec := pathSpec{rotate: 1}
+	pathAndQuery := strings.SplitN(raw, "?", 2)
+	path := pathAndQuery[0]
+	if path == "" {
+		spec.patterns = []string{"/"}
+		return spec
+	}
+
+	if d := strings.Index(path, "||d="); d >= 0 {
+		for _, item := range strings.Split(path[d+4:], ",") {
+			item = strings.TrimSpace(item)
+			if item != "" {
+				spec.decoy = append(spec.decoy, item)
+			}
+		}
+		path = path[:d]
+	}
+
+	if i := strings.Index(path, "||r="); i >= 0 {
+		body := path[:i]
+		rest := path[i+4:]
+		if j := strings.Index(rest, "||j="); j >= 0 {
+			fmt.Sscanf(rest[:j], "%d", &spec.rotate)
+			fmt.Sscanf(rest[j+4:], "%d", &spec.jitter)
+		} else {
+			fmt.Sscanf(rest, "%d", &spec.rotate)
+		}
+		path = body
+	}
+
+	spec.patterns = strings.Split(path, "|")
+	if spec.rotate < 1 {
+		spec.rotate = 1
+	}
+	if spec.jitter < 0 {
+		spec.jitter = 0
+	}
+	return spec
+}
+
+func (c *Config) GetDecoyPaths() []string {
+	return c.pathSpec().decoy
+}
+
+func (c *Config) pathSpec() pathSpec {
+	if c == nil {
+		return pathSpec{patterns: []string{"/"}, rotate: 1}
+	}
+	return parsePathSpec(c.Path)
+}
+
+func normalizeSinglePath(path string) string {
+	pathAndQuery := strings.SplitN(path, "?", 2)
+	path = pathAndQuery[0]
 	if path == "" || path[0] != '/' {
 		path = "/" + path
 	}
+	if path[len(path)-1] != '/' && !pathLastSegmentLooksLikeFile(path) {
+		path += "/"
+	}
+	return path
+}
 
-	if c.GetNormalizedSessionPlacement() == PlacementPath ||
-		c.GetNormalizedSeqPlacement() == PlacementPath {
-		if path[len(path)-1] != '/' {
-			path = path + "/"
+func commonDirPrefix(paths []string) string {
+	if len(paths) == 0 {
+		return "/"
+	}
+	prefix := normalizeSinglePath(paths[0])
+	if !strings.HasSuffix(prefix, "/") {
+		if i := strings.LastIndex(prefix, "/"); i >= 0 {
+			prefix = prefix[:i+1]
 		}
 	}
+	for _, p := range paths[1:] {
+		n := normalizeSinglePath(p)
+		for !strings.HasPrefix(n, prefix) {
+			if prefix == "/" {
+				return "/"
+			}
+			prefix = prefix[:len(prefix)-1]
+			if i := strings.LastIndex(prefix, "/"); i >= 0 {
+				prefix = prefix[:i+1]
+			} else {
+				return "/"
+			}
+		}
+	}
+	if prefix == "" {
+		return "/"
+	}
+	return prefix
+}
 
-	return path
+func (c *Config) GetNormalizedPath() string {
+	spec := c.pathSpec()
+	if len(spec.patterns) == 1 {
+		path := normalizeSinglePath(spec.patterns[0])
+		if c.GetNormalizedSessionPlacement() != PlacementPath && c.GetNormalizedSeqPlacement() != PlacementPath && !strings.HasSuffix(spec.patterns[0], "/") && path != "/" {
+			path = strings.TrimSuffix(path, "/")
+		}
+		return path
+	}
+	return commonDirPrefix(spec.patterns)
+}
+
+// GetRequestPath is the URL path for a given packet-up sequence number.
+// offset is a per-dial jitter so sessions do not all start on the same file.
+func (c *Config) GetRequestPath(seq int64, offset ...int64) string {
+	spec := c.pathSpec()
+	var off int64
+	if len(offset) > 0 {
+		off = offset[0]
+	}
+	rotate := int64(spec.rotate)
+	if rotate < 1 {
+		rotate = 1
+	}
+	fileIdx := off + seq/rotate
+	if fileIdx < 0 {
+		fileIdx = 0
+	}
+	pat := spec.patterns[fileIdx%int64(len(spec.patterns))]
+	return normalizeSinglePath(pat)
+}
+
+// NewPathSeqOffset returns a random start index when pathSeqJitter is set.
+func (c *Config) NewPathSeqOffset() int64 {
+	spec := c.pathSpec()
+	if spec.jitter <= 0 {
+		return 0
+	}
+	return crypto.RandBetween(0, int64(spec.jitter))
 }
 
 func (c *Config) GetNormalizedQuery() string {

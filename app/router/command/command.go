@@ -81,6 +81,31 @@ func (s *routingServer) ListRule(ctx context.Context, request *ListRuleRequest) 
 	return nil, errors.New("unsupported router implementation")
 }
 
+func (s *routingServer) AddFallbackRule(ctx context.Context, request *AddFallbackRuleRequest) (*AddFallbackRuleResponse, error) {
+	if bo, ok := s.router.(routing.Router); ok {
+		return &AddFallbackRuleResponse{}, bo.AddFallbackRule(request.Config, request.ShouldAppend)
+	}
+	return nil, errors.New("unsupported router implementation")
+}
+
+func (s *routingServer) RemoveFallbackRule(ctx context.Context, request *RemoveFallbackRuleRequest) (*RemoveFallbackRuleResponse, error) {
+	if bo, ok := s.router.(routing.Router); ok {
+		return &RemoveFallbackRuleResponse{}, bo.RemoveFallbackRule(request.RuleTag)
+	}
+	return nil, errors.New("unsupported router implementation")
+}
+
+func (s *routingServer) GetRoutingMode(ctx context.Context, request *GetRoutingModeRequest) (*GetRoutingModeResponse, error) {
+	if bo, ok := s.router.(routing.Router); ok {
+		mode, err := bo.GetRoutingMode()
+		if err != nil {
+			return nil, err
+		}
+		return &GetRoutingModeResponse{FallbackMode: mode}, nil
+	}
+	return nil, errors.New("unsupported router implementation")
+}
+
 // NewRoutingServer creates a statistics service with statistics manager.
 func NewRoutingServer(router routing.Router, routingStats stats.Channel) RoutingServiceServer {
 	return &routingServer{
