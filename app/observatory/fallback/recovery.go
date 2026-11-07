@@ -1,9 +1,10 @@
 package fallback
 
 import (
+	"sync"
+
 	"github.com/xtls/xray-core/app/observatory"
 	"github.com/xtls/xray-core/common/errors"
-	"sync"
 )
 
 // Check only the default primary pool on return from WL. A direct canary proves

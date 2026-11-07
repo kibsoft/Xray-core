@@ -3,13 +3,14 @@ package fallback
 import (
 	"context"
 	"errors"
+	"sync/atomic"
+	"testing"
+	"time"
+
 	vnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/signal/done"
 	"github.com/xtls/xray-core/features/routing"
 	"github.com/xtls/xray-core/transport/internet/tagged"
-	"sync/atomic"
-	"testing"
-	"time"
 )
 
 func TestUnansweredTrafficDetectsFailureWithoutTransportError(t *testing.T) {

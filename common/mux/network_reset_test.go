@@ -1,8 +1,9 @@
 package mux
 
 import (
-	"github.com/xtls/xray-core/common/signal/done"
 	"testing"
+
+	"github.com/xtls/xray-core/common/signal/done"
 )
 
 func TestNetworkResetClosesOldWorkers(t *testing.T) {

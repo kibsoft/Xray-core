@@ -2,10 +2,11 @@ package outbound
 
 import (
 	"context"
+	"sync"
+
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/transport"
-	"sync"
 )
 
 type activeRequest struct {

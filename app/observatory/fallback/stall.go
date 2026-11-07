@@ -2,13 +2,16 @@ package fallback
 
 import (
 	"errors"
-	xerrors "github.com/xtls/xray-core/common/errors"
 	"time"
+
+	xerrors "github.com/xtls/xray-core/common/errors"
 )
 
-const trafficStallTimeout = 3 * time.Second
-const healthyStallBackoff = 15 * time.Second
-const maxHealthyStallBackoff = time.Minute
+const (
+	trafficStallTimeout    = 3 * time.Second
+	healthyStallBackoff    = 15 * time.Second
+	maxHealthyStallBackoff = time.Minute
+)
 
 var errTrafficStalled = errors.New("outbound traffic stalled without a response")
 

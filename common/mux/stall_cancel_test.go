@@ -2,10 +2,11 @@ package mux
 
 import (
 	"context"
-	"github.com/xtls/xray-core/transport"
-	"github.com/xtls/xray-core/transport/internet"
 	"testing"
 	"time"
+
+	"github.com/xtls/xray-core/transport"
+	"github.com/xtls/xray-core/transport/internet"
 )
 
 type stuckHandshake struct{ started, canceled chan struct{} }

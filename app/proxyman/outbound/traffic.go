@@ -2,19 +2,22 @@ package outbound
 
 import (
 	"context"
+	"time"
+
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/transport"
-	"time"
 )
 
-type outboundRequestStart struct{}
-type trafficObserver interface {
-	WatchOutboundTraffic(string) bool
-	ReportOutboundTraffic(string, bool)
-}
+type (
+	outboundRequestStart struct{}
+	trafficObserver      interface {
+		WatchOutboundTraffic(string) bool
+		ReportOutboundTraffic(string, bool)
+	}
+)
 
 func (h *Handler) watchTraffic(ctx context.Context, link *transport.Link) *transport.Link {
 	if session.SkipOutboundErrorReportFromContext(ctx) {
@@ -57,6 +60,7 @@ func (r *trafficReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
 	}
 	return b, err
 }
+
 func (r *trafficReader) ReadMultiBufferTimeout(timeout time.Duration) (buf.MultiBuffer, error) {
 	timed, ok := r.Reader.(buf.TimeoutReader)
 	if !ok {

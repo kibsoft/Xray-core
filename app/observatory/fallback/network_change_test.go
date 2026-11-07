@@ -85,9 +85,11 @@ func TestNetworkChangeEntersWhitelistWithinSevenSecondsWhileProbeSlotBusy(t *tes
 	defer func() { tagged.Dialer = oldDialer }()
 	o := &Observer{
 		ctx: context.Background(), finished: done.New(),
-		config: &Config{SubjectSelector: []string{"primary-"}, FallbackSubjectSelector: []string{"fallback-"},
+		config: &Config{
+			SubjectSelector: []string{"primary-"}, FallbackSubjectSelector: []string{"fallback-"},
 			CanaryForeign: []string{"foreign.test:443"}, CanaryDomestic: []string{"domestic.test:443"},
-			CanaryTimeout: int64(100 * time.Millisecond), CanaryConfirmRounds: 2, ProbeUrl: "http://probe.test/generate_204"},
+			CanaryTimeout: int64(100 * time.Millisecond), CanaryConfirmRounds: 2, ProbeUrl: "http://probe.test/generate_204",
+		},
 		ohm: &mockOutboundManager{mockHandlerSelector: mockHandlerSelector{bySelector: map[string][]string{
 			"primary-": {"primary-1"}, "fallback-": {"fallback-1"},
 		}}},

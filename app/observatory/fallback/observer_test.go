@@ -51,9 +51,11 @@ func (m *mockOutboundManager) GetDefaultHandler() outbound.Handler { return nil 
 func (m *mockOutboundManager) AddHandler(context.Context, outbound.Handler) error {
 	return nil
 }
+
 func (m *mockOutboundManager) RemoveHandler(context.Context, string) error {
 	return nil
 }
+
 func (m *mockOutboundManager) ListHandlers(context.Context) []outbound.Handler {
 	return nil
 }

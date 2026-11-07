@@ -2,10 +2,11 @@ package outbound
 
 import (
 	"context"
+	"testing"
+
 	"github.com/xtls/xray-core/common/session"
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/pipe"
-	"testing"
 )
 
 func TestNetworkResetCancelsOnlyThisNodesRawRequests(t *testing.T) {

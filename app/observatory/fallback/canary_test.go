@@ -2,12 +2,13 @@ package fallback
 
 import (
 	"context"
-	"github.com/xtls/xray-core/app/observatory"
 	gonet "net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/xtls/xray-core/app/observatory"
 
 	v2net "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/features/routing"
@@ -151,10 +152,12 @@ func TestOfflineFallbackDoesNotProbeServers(t *testing.T) {
 		return nil, nil
 	}
 	t.Cleanup(func() { tagged.Dialer = old })
-	o := &Observer{config: &Config{
-		FallbackSubjectSelector: []string{"fallback-"},
-		CanaryForeign:           []string{"foreign"}, CanaryDomestic: []string{"domestic"},
-	}, ohm: &mockOutboundManager{}, modeCtrl: &mockModeController{fallback: true},
-		canary: canaryCache{state: NetworkOffline, at: time.Now()}}
+	o := &Observer{
+		config: &Config{
+			FallbackSubjectSelector: []string{"fallback-"},
+			CanaryForeign:           []string{"foreign"}, CanaryDomestic: []string{"domestic"},
+		}, ohm: &mockOutboundManager{}, modeCtrl: &mockModeController{fallback: true},
+		canary: canaryCache{state: NetworkOffline, at: time.Now()},
+	}
 	o.fallbackCanaryTick()
 }
